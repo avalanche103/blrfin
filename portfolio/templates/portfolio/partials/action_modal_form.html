@@ -4,7 +4,7 @@
     {{ form.non_field_errors }}
 </div>
 {% endif %}
-<form hx-post="{{ action_url }}" hx-target="#modal-form-root" hx-swap="innerHTML" {% if enctype %}enctype="{{ enctype }}"{% endif %}>
+<form hx-post="{{ action_url }}" hx-target="#modal-root" hx-swap="innerHTML" hx-on::after-request="if (event.detail.successful) { const modalRoot = document.getElementById('modal-root'); if (modalRoot) { modalRoot.innerHTML = ''; } }" {% if enctype %}enctype="{{ enctype }}"{% endif %}>
     {% csrf_token %}
     {{ form.as_p }}
     <button class="btn" type="submit">{{ submit_label }}</button>

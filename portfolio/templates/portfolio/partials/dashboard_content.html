@@ -1,5 +1,4 @@
 {% include "portfolio/partials/messages.html" %}
-<div id="modal-root" hx-swap-oob="innerHTML"></div>
 
 <section class="toolbar" aria-label="Быстрые действия">
     <div class="toolbar-status">
@@ -48,6 +47,27 @@
 
     <section class="card card--span-12">
         <h2>Портфель</h2>
+        <div class="toolbar-status" style="margin-bottom: 1rem;">
+            <div>
+                <strong>Доходность портфеля по инструментам</strong>
+                <span>
+                    К {{ portfolio_performance.previous_month_end.date|date:'d.m.Y' }}:
+                    {% if portfolio_performance.previous_month_end.return_pct is not None %}
+                        {{ portfolio_performance.previous_month_end.return_pct|floatformat:2 }}%
+                    {% else %}
+                        <span class="muted">Нет базы</span>
+                    {% endif %}
+                </span>
+                <span>
+                    К {{ portfolio_performance.previous_year_end.date|date:'d.m.Y' }}:
+                    {% if portfolio_performance.previous_year_end.return_pct is not None %}
+                        {{ portfolio_performance.previous_year_end.return_pct|floatformat:2 }}%
+                    {% else %}
+                        <span class="muted">Нет базы</span>
+                    {% endif %}
+                </span>
+            </div>
+        </div>
         {% include "portfolio/partials/portfolio_table.html" %}
     </section>
 

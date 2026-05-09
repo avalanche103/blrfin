@@ -7,12 +7,12 @@ from django.utils import timezone
 from django.utils.dateparse import parse_date
 from django.views.decorators.http import require_GET, require_POST
 
-from .forms import AccountForm, AccountTopUpForm, AssetCloseForm, AssetForm, CSVImportForm, DepositAssetForm, DepositCapitalizationAdjustmentForm, DepositTopUpForm, FXRateForm, TransactionForm, TransferForm
+from .forms import AccountForm, AccountTopUpForm, AssetCloseForm, AssetForm, CSVImportForm, DepositAssetForm, DepositCapitalizationAdjustmentForm, DepositRateChangeForm, DepositTopUpForm, FXRateForm, TransactionForm, TransferForm
 from .services.accounts import delete_account
 from .services.dashboard import build_dashboard_context
 from .services.imports import import_transactions_from_csv
 from .services.rates import auto_sync_nbrb_rates_if_stale, sync_nbrb_rates
-from .services.transactions import ACCOUNT_TOPUP_NOTE, add_deposit_topup, build_deposit_capitalization_history, close_asset, create_asset, create_transfer, create_transaction, delete_asset, delete_capitalization_adjustment, delete_deposit_topup, get_current_asset_price, update_deposit_topup, update_asset, upsert_capitalization_adjustment, upsert_fx_rate
+from .services.transactions import ACCOUNT_TOPUP_NOTE, add_deposit_topup, build_deposit_capitalization_history, close_asset, create_asset, create_transfer, create_transaction, delete_asset, delete_capitalization_adjustment, delete_deposit_rate_change, delete_deposit_topup, get_current_asset_price, get_deposit_effective_rate, update_deposit_topup, update_asset, upsert_capitalization_adjustment, upsert_deposit_rate_change, upsert_fx_rate
 
 
 def _is_htmx(request: HttpRequest) -> bool:
@@ -32,7 +32,9 @@ def _render_dashboard(request: HttpRequest, forms=None, status=200) -> HttpRespo
 
 def _render_htmx_success(request: HttpRequest) -> HttpResponse:
     context = _build_dashboard_context_with_auto_rates()
-    return render(request, 'portfolio/partials/action_success.html', context)
+    response = render(request, 'portfolio/partials/action_success.html', context)
+    response['HX-Trigger'] = 'portfolio:close-modal'
+    return response
 
 
 def _render_modal(
@@ -112,6 +114,10 @@ def _deposit_history_description() -> str:
 
 def _capitalization_adjustment_description() -> str:
     return 'Если банк начислил проценты немного иначе, сохраните фактическую сумму процентов для конкретной даты капитализации.'
+
+
+def _deposit_rate_change_description() -> str:
+    return 'Задайте новую ставку с конкретной даты. Ставка на дату открытия редактируется в карточке депозита, а все последующие изменения ведутся здесь.'
 
 
 @require_GET
@@ -228,16 +234,46 @@ def deposit_topup_form_view(request: HttpRequest, asset_id: int) -> HttpResponse
 
 @require_GET
 def deposit_history_view(request: HttpRequest, asset_id: int) -> HttpResponse:
-    asset = get_object_or_404(AssetForm._meta.model.objects.prefetch_related('topups__source_account'), pk=asset_id)
+    asset = get_object_or_404(AssetForm._meta.model.objects.prefetch_related('topups__source_account', 'rate_changes'), pk=asset_id)
     asset.current_price = get_current_asset_price(asset)
     context = {
         'title': f'История депозита {asset.symbol}',
         'description': _deposit_history_description(),
         'asset': asset,
         'topups': asset.topups.select_related('source_account').all(),
+        'current_annual_rate': get_deposit_effective_rate(asset),
+        'rate_changes': asset.rate_changes.all(),
         'capitalization_history': build_deposit_capitalization_history(asset),
     }
     return render(request, 'portfolio/partials/deposit_history_modal.html', context)
+
+
+@require_GET
+def deposit_rate_change_form_view(request: HttpRequest, asset_id: int) -> HttpResponse:
+    asset = get_object_or_404(AssetForm._meta.model, pk=asset_id)
+    form = DepositRateChangeForm(asset=asset, initial={'effective_date': timezone.localdate()})
+    return _render_modal(
+        request,
+        title='Изменить ставку депозита',
+        form=form,
+        action_url=reverse('portfolio:deposit-rate-change-create', args=[asset.id]),
+        submit_label='Сохранить ставку',
+        description=_deposit_rate_change_description(),
+    )
+
+
+@require_GET
+def deposit_rate_change_edit_form_view(request: HttpRequest, rate_change_id: int) -> HttpResponse:
+    rate_change = get_object_or_404(DepositRateChangeForm._meta.model.objects.select_related('asset'), pk=rate_change_id)
+    form = DepositRateChangeForm(instance=rate_change, asset=rate_change.asset)
+    return _render_modal(
+        request,
+        title='Редактировать изменение ставки',
+        form=form,
+        action_url=reverse('portfolio:deposit-rate-change-update', args=[rate_change.id]),
+        submit_label='Сохранить изменения',
+        description=_deposit_rate_change_description(),
+    )
 
 
 @require_GET
@@ -605,6 +641,68 @@ def update_capitalization_adjustment_view(request: HttpRequest, asset_id: int, c
             status=400,
         )
     return _render_dashboard(request, status=400)
+
+
+@require_POST
+def create_deposit_rate_change_view(request: HttpRequest, asset_id: int) -> HttpResponse:
+    asset = get_object_or_404(AssetForm._meta.model, pk=asset_id)
+    form = DepositRateChangeForm(request.POST, asset=asset)
+    if form.is_valid():
+        upsert_deposit_rate_change(
+            asset,
+            effective_date=form.cleaned_data['effective_date'],
+            annual_rate=form.cleaned_data['annual_rate'],
+            notes=form.cleaned_data['notes'],
+        )
+        messages.success(request, f'Ставка депозита {asset.symbol} обновлена.')
+        return redirect('portfolio:dashboard') if not _is_htmx(request) else _render_htmx_success(request)
+    if _is_htmx(request):
+        return _render_modal(
+            request,
+            title='Изменить ставку депозита',
+            form=form,
+            action_url=reverse('portfolio:deposit-rate-change-create', args=[asset.id]),
+            submit_label='Сохранить ставку',
+            description=_deposit_rate_change_description(),
+            status=400,
+        )
+    return _render_dashboard(request, status=400)
+
+
+@require_POST
+def update_deposit_rate_change_view(request: HttpRequest, rate_change_id: int) -> HttpResponse:
+    rate_change = get_object_or_404(DepositRateChangeForm._meta.model.objects.select_related('asset'), pk=rate_change_id)
+    form = DepositRateChangeForm(request.POST, instance=rate_change, asset=rate_change.asset)
+    if form.is_valid():
+        upsert_deposit_rate_change(
+            rate_change.asset,
+            effective_date=form.cleaned_data['effective_date'],
+            annual_rate=form.cleaned_data['annual_rate'],
+            notes=form.cleaned_data['notes'],
+            rate_change=rate_change,
+        )
+        messages.success(request, f'Ставка депозита {rate_change.asset.symbol} обновлена.')
+        return redirect('portfolio:dashboard') if not _is_htmx(request) else _render_htmx_success(request)
+    if _is_htmx(request):
+        return _render_modal(
+            request,
+            title='Редактировать изменение ставки',
+            form=form,
+            action_url=reverse('portfolio:deposit-rate-change-update', args=[rate_change.id]),
+            submit_label='Сохранить изменения',
+            description=_deposit_rate_change_description(),
+            status=400,
+        )
+    return _render_dashboard(request, status=400)
+
+
+@require_POST
+def delete_deposit_rate_change_view(request: HttpRequest, rate_change_id: int) -> HttpResponse:
+    rate_change = get_object_or_404(DepositRateChangeForm._meta.model.objects.select_related('asset'), pk=rate_change_id)
+    asset_symbol = rate_change.asset.symbol
+    delete_deposit_rate_change(rate_change)
+    messages.success(request, f'Изменение ставки депозита {asset_symbol} удалено.')
+    return redirect('portfolio:dashboard') if not _is_htmx(request) else _render_htmx_success(request)
 
 
 @require_POST

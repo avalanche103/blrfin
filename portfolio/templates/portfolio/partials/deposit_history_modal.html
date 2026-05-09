@@ -17,9 +17,70 @@
             <p><strong>Дата открытия:</strong> {{ asset.deposit_open_date|date:'d.m.Y' }}</p>
             <p><strong>Начальный взнос:</strong> {{ asset.deposit_initial_amount|floatformat:2 }} {{ asset.price_currency }}</p>
             <p><strong>Текущая сумма:</strong> {{ asset.current_price|floatformat:2 }} {{ asset.price_currency }}</p>
-            <p><strong>Ставка:</strong> {{ asset.deposit_annual_rate }}%</p>
+            <p><strong>Базовая ставка на дату открытия:</strong> {{ asset.deposit_annual_rate }}%</p>
+            <p><strong>Текущая эффективная ставка:</strong> {{ current_annual_rate }}%</p>
             <p><strong>Выплата процентов:</strong> {{ asset.get_deposit_interest_payout_method_display }}</p>
             <p><strong>Периодичность:</strong> {{ asset.get_deposit_interest_payout_frequency_display }}</p>
+        </div>
+
+        <div class="card" style="margin-bottom: 16px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:12px;">
+                <div>
+                    <h4 style="margin:0;">История ставок</h4>
+                    <div class="muted">Ставку на дату открытия меняйте в карточке депозита. Все последующие изменения задаются здесь.</div>
+                </div>
+                <button
+                    class="btn"
+                    hx-get="{% url 'portfolio:deposit-rate-change-form' asset.id %}"
+                    hx-target="#modal-root"
+                    hx-swap="innerHTML"
+                    type="button"
+                >
+                    Изменить ставку
+                </button>
+            </div>
+            <div style="overflow-x:auto;">
+            <table>
+                <thead>
+                    <tr>
+                        <th>С какого числа</th>
+                        <th>Ставка</th>
+                        <th>Комментарий</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>{{ asset.deposit_open_date|date:'d.m.Y' }}</td>
+                        <td class="mono">{{ asset.deposit_annual_rate }}%</td>
+                        <td class="muted">Базовая ставка при открытии депозита</td>
+                        <td></td>
+                    </tr>
+                    {% for rate_change in rate_changes %}
+                    <tr>
+                        <td>{{ rate_change.effective_date|date:'d.m.Y' }}</td>
+                        <td class="mono">{{ rate_change.annual_rate }}%</td>
+                        <td>{{ rate_change.notes|default:'-' }}</td>
+                        <td>
+                            <button
+                                class="btn"
+                                hx-get="{% url 'portfolio:deposit-rate-change-edit-form' rate_change.id %}"
+                                hx-target="#modal-root"
+                                hx-swap="innerHTML"
+                                type="button"
+                            >
+                                Редактировать
+                            </button>
+                            <form hx-post="{% url 'portfolio:deposit-rate-change-delete' rate_change.id %}" hx-target="#dashboard-content" hx-swap="innerHTML" hx-confirm="Удалить изменение ставки от {{ rate_change.effective_date|date:'d.m.Y' }}?" style="display:inline-block; margin-left:8px;">
+                                {% csrf_token %}
+                                <button class="btn" type="submit">Удалить</button>
+                            </form>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            </div>
         </div>
 
         <div class="card">
@@ -106,6 +167,7 @@
                         <td class="mono">{{ item.opening_balance|floatformat:2 }} {{ asset.price_currency }}</td>
                         <td class="mono">{{ item.topups_amount|floatformat:2 }} {{ asset.price_currency }}</td>
                         <td class="mono">
+                            <div class="muted">Ставка: {{ item.annual_rate }}%</div>
                             {{ item.interest_amount|floatformat:2 }} {{ asset.price_currency }}
                             {% if item.is_adjusted %}
                             <div class="muted">Корректировка{% if item.adjustment_notes %}: {{ item.adjustment_notes }}{% endif %}</div>

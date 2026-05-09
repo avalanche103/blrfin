@@ -1,13 +1,16 @@
+from datetime import datetime, time
 from decimal import Decimal
+from types import SimpleNamespace
 
 from django.conf import settings
+from django.utils import timezone
 
 from django.db import transaction as db_transaction
 
-from portfolio.models import Account, DepositTopUp, Transaction
+from portfolio.models import Account, Asset, DepositTopUp, Transaction
 
 from .portfolio import convert_amount
-from .transactions import ACCOUNT_TOPUP_NOTE, CLOSE_ASSET_NOTE, DEPOSIT_TOPUP_NOTE, SYSTEM_DEPOSIT_NOTE, has_system_note
+from .transactions import ACCOUNT_TOPUP_NOTE, CLOSE_ASSET_NOTE, DEPOSIT_TOPUP_NOTE, SYSTEM_DEPOSIT_NOTE, build_deposit_capitalization_history, has_system_note
 
 
 SYSTEM_DEPOSIT_NOTE = '__system_deposit_position__'
@@ -62,9 +65,59 @@ def list_transfers(limit=25):
     return queryset[:limit] if limit else queryset
 
 
+def _as_operation_item(*, occurred_at, display_type, asset=None, source_account=None, destination_account=None, amount=Decimal('0'), currency='', fee=Decimal('0')):
+    return SimpleNamespace(
+        occurred_at=occurred_at,
+        display_type=display_type,
+        asset=asset,
+        source_account=source_account,
+        destination_account=destination_account,
+        amount=amount,
+        currency=currency,
+        fee=fee,
+        get_status_display=lambda: 'Исполнено',
+    )
+
+
+def _deposit_topup_history_items():
+    items = []
+    queryset = DepositTopUp.objects.filter(cash_transaction__isnull=True).select_related('asset', 'source_account')
+    for topup in queryset:
+        occurred_at = timezone.make_aware(datetime.combine(topup.topup_date, time.min), timezone.get_current_timezone())
+        items.append(
+            _as_operation_item(
+                occurred_at=occurred_at,
+                display_type='Пополнение депозита',
+                asset=topup.asset,
+                source_account=topup.source_account,
+                amount=topup.amount,
+                currency=topup.asset.price_currency or (topup.asset.account.currency if topup.asset.account else ''),
+            )
+        )
+    return items
+
+
+def _deposit_capitalization_history_items():
+    items = []
+    deposits = Asset.objects.filter(asset_class=Asset.AssetClass.DEPOSIT).select_related('account')
+    for asset in deposits:
+        for row in build_deposit_capitalization_history(asset):
+            occurred_at = timezone.make_aware(datetime.combine(row['capitalization_date'], time.min), timezone.get_current_timezone())
+            items.append(
+                _as_operation_item(
+                    occurred_at=occurred_at,
+                    display_type='Капитализация депозита',
+                    asset=asset,
+                    amount=row['interest_amount'],
+                    currency=asset.price_currency or (asset.account.currency if asset.account else ''),
+                )
+            )
+    return items
+
+
 def list_transactions(limit=25):
     queryset = Transaction.objects.select_related('source_account', 'destination_account', 'asset')
-    items = list(queryset[:limit] if limit else queryset)
+    items = list(queryset)
     for item in items:
         if has_system_note(item, CLOSE_ASSET_NOTE):
             item.display_type = 'Закрытие продукта'
@@ -76,7 +129,11 @@ def list_transactions(limit=25):
             item.display_type = 'Пополнение счета'
         else:
             item.display_type = item.get_transaction_type_display()
-    return items
+
+    items.extend(_deposit_topup_history_items())
+    items.extend(_deposit_capitalization_history_items())
+    items.sort(key=lambda item: item.occurred_at, reverse=True)
+    return items[:limit] if limit else items
 
 
 @db_transaction.atomic

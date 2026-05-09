@@ -8,7 +8,7 @@ from django.utils.dateparse import parse_date
 from django.utils import timezone
 from django.db import transaction as db_transaction
 
-from portfolio.models import Asset, DepositCapitalizationAdjustment, DepositTopUp, FXRate, Transaction
+from portfolio.models import Asset, DepositCapitalizationAdjustment, DepositRateChange, DepositTopUp, FXRate, Transaction
 
 
 SYSTEM_DEPOSIT_NOTE = '__system_deposit_position__'
@@ -109,6 +109,33 @@ def _capitalization_adjustments_by_date(asset):
     }
 
 
+def _rate_changes_by_date(asset, effective_end=None):
+    if not asset.pk:
+        return {}
+    queryset = DepositRateChange.objects.filter(asset=asset)
+    if effective_end:
+        queryset = queryset.filter(effective_date__lte=effective_end)
+    return {
+        item.effective_date: item
+        for item in queryset.order_by('effective_date', 'id')
+    }
+
+
+def get_deposit_effective_rate(asset, *, on_date=None):
+    if asset.asset_class != Asset.AssetClass.DEPOSIT:
+        return None
+    if asset.deposit_annual_rate is None:
+        return None
+
+    effective_date = on_date or timezone.localdate()
+    effective_rate = asset.deposit_annual_rate
+    if asset.pk:
+        rate_change = DepositRateChange.objects.filter(asset=asset, effective_date__lte=effective_date).order_by('effective_date', 'id').last()
+        if rate_change:
+            effective_rate = rate_change.annual_rate
+    return effective_rate
+
+
 def _compound_contribution(amount, contribution_date, effective_end, annual_rate, payout_frequency):
     if effective_end <= contribution_date:
         return _quantize_money(amount)
@@ -162,21 +189,23 @@ def _simulate_deposit_capitalization(asset):
         return principal, []
 
     balance = principal
-    rate_per_day = (asset.deposit_annual_rate / Decimal('100')) / Decimal('365')
+    current_rate = asset.deposit_annual_rate
     capitalization_dates = set(_capitalization_dates(asset, effective_end))
     topups_by_date = _deposit_topups_by_date(asset, effective_end)
     adjustments_by_date = _capitalization_adjustments_by_date(asset)
+    rate_changes_by_date = _rate_changes_by_date(asset, effective_end)
 
     history = []
     current_period_start = asset.deposit_open_date
     opening_balance = balance
     period_topups = Decimal('0')
     period_daily_balance_total = Decimal('0')
+    period_interest_total = Decimal('0')
     current_date = asset.deposit_open_date
 
     while current_date <= effective_end:
         if current_date in capitalization_dates:
-            computed_interest_amount = _quantize_money(period_daily_balance_total * rate_per_day)
+            computed_interest_amount = _quantize_money(period_interest_total)
             adjustment = adjustments_by_date.get(current_date)
             interest_amount = adjustment.interest_amount if adjustment else computed_interest_amount
             balance_before = _quantize_money(balance)
@@ -190,6 +219,7 @@ def _simulate_deposit_capitalization(asset):
                     'daily_balance_total': _quantize_money(period_daily_balance_total),
                     'computed_interest_amount': computed_interest_amount,
                     'interest_amount': interest_amount,
+                    'annual_rate': current_rate,
                     'balance_after': balance_after,
                     'is_adjusted': bool(adjustment),
                     'adjustment_id': adjustment.id if adjustment else None,
@@ -201,6 +231,11 @@ def _simulate_deposit_capitalization(asset):
             opening_balance = balance
             period_topups = Decimal('0')
             period_daily_balance_total = Decimal('0')
+            period_interest_total = Decimal('0')
+
+        rate_change = rate_changes_by_date.get(current_date)
+        if rate_change:
+            current_rate = rate_change.annual_rate
 
         topup_amount = topups_by_date.get(current_date, Decimal('0'))
         if topup_amount:
@@ -212,6 +247,7 @@ def _simulate_deposit_capitalization(asset):
 
         if current_date < effective_end:
             period_daily_balance_total += balance
+            period_interest_total += balance * ((current_rate / Decimal('100')) / Decimal('365'))
 
         current_date += timedelta(days=1)
 
@@ -261,10 +297,11 @@ def _build_deposit_projected_schedule(asset, *, effective_end):
         return principal, []
 
     balance = principal
-    rate_per_day = (asset.deposit_annual_rate / Decimal('100')) / Decimal('365')
+    current_rate = asset.deposit_annual_rate
     event_dates = set(_capitalization_dates(asset, effective_end))
     topups_by_date = _deposit_topups_by_date(asset, effective_end)
     adjustments_by_date = _capitalization_adjustments_by_date(asset)
+    rate_changes_by_date = _rate_changes_by_date(asset, effective_end)
     is_capitalization = asset.deposit_interest_payout_method == Asset.InterestPayoutMethod.CAPITALIZATION
 
     schedule = []
@@ -272,11 +309,12 @@ def _build_deposit_projected_schedule(asset, *, effective_end):
     opening_balance = balance
     period_topups = Decimal('0')
     period_daily_balance_total = Decimal('0')
+    period_interest_total = Decimal('0')
     current_date = asset.deposit_open_date
 
     while current_date <= effective_end:
         if current_date in event_dates:
-            computed_interest_amount = _quantize_money(period_daily_balance_total * rate_per_day)
+            computed_interest_amount = _quantize_money(period_interest_total)
             adjustment = adjustments_by_date.get(current_date) if is_capitalization else None
             interest_amount = adjustment.interest_amount if adjustment else computed_interest_amount
             balance_before = _quantize_money(balance)
@@ -291,6 +329,7 @@ def _build_deposit_projected_schedule(asset, *, effective_end):
                     'daily_balance_total': _quantize_money(period_daily_balance_total),
                     'computed_interest_amount': computed_interest_amount,
                     'interest_amount': interest_amount,
+                    'annual_rate': current_rate,
                     'balance_before': balance_before,
                     'balance_after': balance_after,
                     'is_adjusted': bool(adjustment),
@@ -303,6 +342,11 @@ def _build_deposit_projected_schedule(asset, *, effective_end):
             opening_balance = balance
             period_topups = Decimal('0')
             period_daily_balance_total = Decimal('0')
+            period_interest_total = Decimal('0')
+
+        rate_change = rate_changes_by_date.get(current_date)
+        if rate_change:
+            current_rate = rate_change.annual_rate
 
         topup_amount = topups_by_date.get(current_date, Decimal('0'))
         if topup_amount:
@@ -314,6 +358,7 @@ def _build_deposit_projected_schedule(asset, *, effective_end):
 
         if current_date < effective_end:
             period_daily_balance_total += balance
+            period_interest_total += balance * ((current_rate / Decimal('100')) / Decimal('365'))
 
         current_date += timedelta(days=1)
 
@@ -386,9 +431,40 @@ def delete_capitalization_adjustment(adjustment):
     update_asset(asset, _asset_payload_from_instance(asset))
 
 
+@db_transaction.atomic
+def upsert_deposit_rate_change(asset, *, effective_date, annual_rate, notes='', rate_change=None):
+    if rate_change is None:
+        rate_change = DepositRateChange(asset=asset)
+
+    rate_change.asset = asset
+    rate_change.effective_date = effective_date
+    rate_change.annual_rate = annual_rate
+    rate_change.notes = notes
+    rate_change.full_clean()
+    rate_change.save()
+    update_asset(asset, _asset_payload_from_instance(asset))
+    return rate_change
+
+
+@db_transaction.atomic
+def delete_deposit_rate_change(rate_change):
+    asset = rate_change.asset
+    rate_change.delete()
+    update_asset(asset, _asset_payload_from_instance(asset))
+
+
 def get_current_asset_price(asset):
     if asset.asset_class == Asset.AssetClass.DEPOSIT:
         return calculate_deposit_current_amount(asset)
+    return asset.current_price
+
+
+def get_asset_price_on_date(asset, *, on_date=None):
+    if on_date is None:
+        return get_current_asset_price(asset)
+    if asset.asset_class == Asset.AssetClass.DEPOSIT:
+        value_on_date, _ = _build_deposit_projected_schedule(asset, effective_end=on_date)
+        return value_on_date
     return asset.current_price
 
 
@@ -722,6 +798,7 @@ def delete_asset(asset):
     Transaction.objects.filter(asset=asset).delete()
     DepositTopUp.objects.filter(asset=asset).delete()
     DepositCapitalizationAdjustment.objects.filter(asset=asset).delete()
+    DepositRateChange.objects.filter(asset=asset).delete()
     asset.delete()
 
 

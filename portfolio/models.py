@@ -217,6 +217,37 @@ class DepositCapitalizationAdjustment(TimestampedModel):
         return f'{self.asset.symbol} {self.capitalization_date} {self.interest_amount}'
 
 
+class DepositRateChange(TimestampedModel):
+    asset = models.ForeignKey(Asset, on_delete=models.PROTECT, related_name='rate_changes', verbose_name='Депозит')
+    effective_date = models.DateField(verbose_name='Дата начала действия')
+    annual_rate = models.DecimalField(max_digits=7, decimal_places=4, verbose_name='Годовая ставка')
+    notes = models.TextField(blank=True, verbose_name='Комментарий')
+
+    class Meta:
+        ordering = ['effective_date', 'id']
+        verbose_name = 'изменение ставки депозита'
+        verbose_name_plural = 'изменения ставки депозита'
+        constraints = [
+            models.UniqueConstraint(fields=['asset', 'effective_date'], name='unique_deposit_rate_change'),
+        ]
+
+    def clean(self):
+        errors = {}
+        if self.asset and self.asset.asset_class != Asset.AssetClass.DEPOSIT:
+            errors['asset'] = 'Изменение ставки доступно только для депозитов.'
+        if self.annual_rate is None or self.annual_rate <= 0:
+            errors['annual_rate'] = 'Укажите годовую ставку больше нуля.'
+        if self.asset and self.effective_date and self.asset.deposit_open_date and self.effective_date <= self.asset.deposit_open_date:
+            errors['effective_date'] = 'Для даты открытия измените ставку в карточке депозита. Историческое изменение ставки должно быть позже даты открытия.'
+        if self.asset and self.asset.closed_at and self.effective_date and self.effective_date > self.asset.closed_at:
+            errors['effective_date'] = 'Нельзя задать изменение ставки после даты закрытия депозита.'
+        if errors:
+            raise ValidationError(errors)
+
+    def __str__(self):
+        return f'{self.asset.symbol} {self.effective_date} {self.annual_rate}'
+
+
 class FXRate(TimestampedModel):
     from_currency = models.CharField(max_length=3, verbose_name='Из валюты')
     to_currency = models.CharField(max_length=3, verbose_name='В валюту')

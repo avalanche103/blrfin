@@ -1,7 +1,7 @@
 from django import forms
 from django.utils import timezone
 
-from .models import Account, Asset, DepositCapitalizationAdjustment, DepositTopUp, FXRate, Transaction
+from .models import Account, Asset, DepositCapitalizationAdjustment, DepositRateChange, DepositTopUp, FXRate, Transaction
 
 
 class StyledModelForm(forms.ModelForm):
@@ -148,6 +148,31 @@ class DepositCapitalizationAdjustmentForm(forms.ModelForm):
             self.instance.asset = self.asset
             self.instance.capitalization_date = cleaned_data.get('capitalization_date')
             self.instance.interest_amount = cleaned_data.get('interest_amount')
+            self.instance.notes = cleaned_data.get('notes') or ''
+            self.instance.full_clean()
+        return cleaned_data
+
+
+class DepositRateChangeForm(forms.ModelForm):
+    effective_date = forms.DateField(label='Дата начала действия', widget=forms.DateInput(attrs={'type': 'date'}))
+
+    class Meta:
+        model = DepositRateChange
+        fields = ['effective_date', 'annual_rate', 'notes']
+
+    def __init__(self, *args, asset=None, **kwargs):
+        self.asset = asset
+        super().__init__(*args, **kwargs)
+        for field in self.fields.values():
+            existing = field.widget.attrs.get('class', '')
+            field.widget.attrs['class'] = f'{existing} form-control'.strip()
+
+    def clean(self):
+        cleaned_data = super().clean()
+        if self.asset:
+            self.instance.asset = self.asset
+            self.instance.effective_date = cleaned_data.get('effective_date')
+            self.instance.annual_rate = cleaned_data.get('annual_rate')
             self.instance.notes = cleaned_data.get('notes') or ''
             self.instance.full_clean()
         return cleaned_data
