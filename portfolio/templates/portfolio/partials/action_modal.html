@@ -1,0 +1,17 @@
+<div class="modal-backdrop" data-modal-backdrop></div>
+<div class="modal-shell">
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+        <div class="modal-header">
+            <div>
+                <h3 id="modal-title">{{ title }}</h3>
+                {% if description %}
+                <p class="muted">{{ description }}</p>
+                {% endif %}
+            </div>
+            <button class="btn modal-close" data-close-modal type="button">Закрыть</button>
+        </div>
+        <div id="modal-form-root">
+            {% include "portfolio/partials/action_modal_form.html" %}
+        </div>
+    </div>
+</div>

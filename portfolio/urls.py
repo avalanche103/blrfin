@@ -1,0 +1,43 @@
+from django.urls import path
+
+from . import views
+
+app_name = 'portfolio'
+
+urlpatterns = [
+    path('', views.dashboard, name='dashboard'),
+    path('actions/accounts/new/', views.account_form_view, name='account-form'),
+    path('actions/accounts/<int:account_id>/edit/', views.account_edit_form_view, name='account-edit-form'),
+    path('actions/accounts/topup/', views.account_topup_form_view, name='account-topup-form'),
+    path('actions/accounts/<int:account_id>/topup/', views.account_topup_form_view, name='account-topup-account-form'),
+    path('actions/deposits/new/', views.deposit_form_view, name='deposit-form'),
+    path('actions/assets/new/', views.asset_form_view, name='asset-form'),
+    path('actions/assets/<int:asset_id>/edit/', views.asset_edit_form_view, name='asset-edit-form'),
+    path('actions/assets/<int:asset_id>/close/', views.asset_close_form_view, name='asset-close-form'),
+    path('actions/assets/<int:asset_id>/history/', views.deposit_history_view, name='deposit-history'),
+    path('actions/assets/<int:asset_id>/capitalizations/<str:capitalization_date>/edit/', views.capitalization_adjustment_form_view, name='capitalization-adjustment-form'),
+    path('actions/assets/<int:asset_id>/topup/', views.deposit_topup_form_view, name='deposit-topup-form'),
+    path('actions/topups/<int:topup_id>/edit/', views.deposit_topup_edit_form_view, name='deposit-topup-edit-form'),
+    path('actions/fx/new/', views.fx_rate_form_view, name='fx-form'),
+    path('actions/transactions/new/', views.transaction_form_view, name='transaction-form'),
+    path('actions/transfers/new/', views.transfer_form_view, name='transfer-form'),
+    path('actions/import/csv/', views.csv_import_form_view, name='csv-form'),
+    path('fx/sync/nbrb/', views.sync_nbrb_rates_view, name='fx-sync-nbrb'),
+    path('accounts/create/', views.create_account_view, name='account-create'),
+    path('accounts/topup/', views.create_account_topup_view, name='account-topup-create'),
+    path('accounts/<int:account_id>/update/', views.update_account_view, name='account-update'),
+    path('accounts/<int:account_id>/delete/', views.delete_account_view, name='account-delete'),
+    path('deposits/create/', views.create_deposit_view, name='deposit-create'),
+    path('assets/create/', views.create_asset_view, name='asset-create'),
+    path('assets/<int:asset_id>/update/', views.update_asset_view, name='asset-update'),
+    path('assets/<int:asset_id>/close/', views.close_asset_view, name='asset-close'),
+    path('assets/<int:asset_id>/capitalizations/<str:capitalization_date>/update/', views.update_capitalization_adjustment_view, name='capitalization-adjustment-update'),
+    path('assets/<int:asset_id>/topup/', views.create_deposit_topup_view, name='deposit-topup-create'),
+    path('capitalizations/<int:adjustment_id>/delete/', views.delete_capitalization_adjustment_view, name='capitalization-adjustment-delete'),
+    path('topups/<int:topup_id>/update/', views.update_deposit_topup_view, name='deposit-topup-update'),
+    path('topups/<int:topup_id>/delete/', views.delete_deposit_topup_view, name='deposit-topup-delete'),
+    path('fx/create/', views.create_fx_rate_view, name='fx-create'),
+    path('transactions/create/', views.create_transaction_view, name='transaction-create'),
+    path('transfers/create/', views.create_transfer_view, name='transfer-create'),
+    path('import/csv/', views.import_csv_view, name='csv-import'),
+]

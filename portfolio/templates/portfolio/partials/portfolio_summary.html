@@ -1,0 +1,20 @@
+<table>
+    <thead>
+        <tr>
+            <th>Класс</th>
+            <th>Стоимость</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for row in portfolio_summary %}
+        <tr>
+            <td>{{ row.asset_class }}</td>
+            <td class="mono">{{ row.base_value|floatformat:2 }} {{ base_currency }}</td>
+        </tr>
+        {% empty %}
+        <tr>
+            <td colspan="2" class="muted">Нет агрегированных данных.</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>

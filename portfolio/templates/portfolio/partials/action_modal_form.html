@@ -1,0 +1,11 @@
+{% if form.errors %}
+<div class="form-errors">
+    Проверьте форму и исправьте ошибки.
+    {{ form.non_field_errors }}
+</div>
+{% endif %}
+<form hx-post="{{ action_url }}" hx-target="#modal-form-root" hx-swap="innerHTML" {% if enctype %}enctype="{{ enctype }}"{% endif %}>
+    {% csrf_token %}
+    {{ form.as_p }}
+    <button class="btn" type="submit">{{ submit_label }}</button>
+</form>

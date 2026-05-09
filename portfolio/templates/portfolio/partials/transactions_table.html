@@ -1,0 +1,33 @@
+<table>
+    <thead>
+        <tr>
+            <th>Дата</th>
+            <th>Тип</th>
+            <th>Актив / счета</th>
+            <th>Сумма</th>
+            <th>Комиссия</th>
+            <th>Статус</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for item in transactions %}
+        <tr>
+            <td>{{ item.occurred_at|date:'Y-m-d H:i' }}</td>
+            <td>{{ item.display_type }}</td>
+            <td>
+                {% if item.asset %}{{ item.asset.symbol }}{% endif %}
+                {% if item.source_account or item.destination_account %}
+                    <div class="muted">{{ item.source_account|default:'-' }} → {{ item.destination_account|default:'-' }}</div>
+                {% endif %}
+            </td>
+            <td class="mono">{{ item.amount|floatformat:2 }} {{ item.currency }}</td>
+            <td class="mono">{{ item.fee|floatformat:2 }} {{ item.currency }}</td>
+            <td>{{ item.get_status_display }}</td>
+        </tr>
+        {% empty %}
+        <tr>
+            <td colspan="6" class="muted">Операций пока нет.</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>

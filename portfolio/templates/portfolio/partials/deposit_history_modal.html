@@ -1,0 +1,145 @@
+<div class="modal-backdrop" data-modal-backdrop></div>
+<div class="modal-shell">
+    <div class="modal-card" style="width: min(1120px, 100%);" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+        <div class="modal-header">
+            <div>
+                <h3 id="modal-title">{{ title }}</h3>
+                {% if description %}
+                <p class="muted">{{ description }}</p>
+                {% endif %}
+            </div>
+            <button class="btn modal-close" data-close-modal type="button">Закрыть</button>
+        </div>
+
+        <div class="card" style="margin-bottom: 16px;">
+            <p><strong>Название:</strong> {{ asset.name }}</p>
+            <p><strong>Счет:</strong> {{ asset.account.name }}</p>
+            <p><strong>Дата открытия:</strong> {{ asset.deposit_open_date|date:'d.m.Y' }}</p>
+            <p><strong>Начальный взнос:</strong> {{ asset.deposit_initial_amount|floatformat:2 }} {{ asset.price_currency }}</p>
+            <p><strong>Текущая сумма:</strong> {{ asset.current_price|floatformat:2 }} {{ asset.price_currency }}</p>
+            <p><strong>Ставка:</strong> {{ asset.deposit_annual_rate }}%</p>
+            <p><strong>Выплата процентов:</strong> {{ asset.get_deposit_interest_payout_method_display }}</p>
+            <p><strong>Периодичность:</strong> {{ asset.get_deposit_interest_payout_frequency_display }}</p>
+        </div>
+
+        <div class="card">
+            <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:12px;">
+                <h4 style="margin:0;">Пополнения</h4>
+                <button
+                    class="btn"
+                    hx-get="{% url 'portfolio:deposit-topup-form' asset.id %}"
+                    hx-target="#modal-root"
+                    hx-swap="innerHTML"
+                    type="button"
+                >
+                    Добавить пополнение
+                </button>
+            </div>
+            <div style="overflow-x:auto;">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Дата</th>
+                        <th>Счет списания</th>
+                        <th>Сумма</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for topup in topups %}
+                    <tr>
+                        <td>{{ topup.topup_date|date:'d.m.Y' }}</td>
+                        <td>{{ topup.source_account.name|default:'Удаленный счет' }}</td>
+                        <td class="mono">{{ topup.amount|floatformat:2 }} {{ asset.price_currency }}</td>
+                        <td>
+                            <button
+                                class="btn"
+                                hx-get="{% url 'portfolio:deposit-topup-edit-form' topup.id %}"
+                                hx-target="#modal-root"
+                                hx-swap="innerHTML"
+                                type="button"
+                            >
+                                Редактировать
+                            </button>
+                            <form hx-post="{% url 'portfolio:deposit-topup-delete' topup.id %}" hx-target="#dashboard-content" hx-swap="innerHTML" hx-confirm="Удалить пополнение от {{ topup.topup_date|date:'d.m.Y' }}?" style="display:inline-block; margin-left:8px;">
+                                {% csrf_token %}
+                                <button class="btn" type="submit">Удалить</button>
+                            </form>
+                        </td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="4" class="muted">Пополнений пока нет.</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            </div>
+        </div>
+
+        <div class="card" style="margin-top: 16px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:12px;">
+                <h4 style="margin:0;">История капитализации</h4>
+                <span class="muted">Начислений: {{ capitalization_history|length }}</span>
+            </div>
+            {% if asset.deposit_interest_payout_method != 'capitalization' %}
+            <p class="muted">Для этого депозита выбрана выплата процентов на счет, поэтому капитализация не применяется.</p>
+            {% else %}
+            <div style="overflow:auto; max-height: 360px; border: 1px solid rgba(219, 205, 182, 0.6); border-radius: 12px;">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Дата капитализации</th>
+                        <th>Период</th>
+                        <th>Остаток на начало</th>
+                        <th>Пополнения за период</th>
+                        <th>Проценты</th>
+                        <th>Сумма после</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for item in capitalization_history %}
+                    <tr>
+                        <td>{{ item.capitalization_date|date:'d.m.Y' }}</td>
+                        <td>{{ item.period_start|date:'d.m.Y' }} - {{ item.capitalization_date|date:'d.m.Y' }}</td>
+                        <td class="mono">{{ item.opening_balance|floatformat:2 }} {{ asset.price_currency }}</td>
+                        <td class="mono">{{ item.topups_amount|floatformat:2 }} {{ asset.price_currency }}</td>
+                        <td class="mono">
+                            {{ item.interest_amount|floatformat:2 }} {{ asset.price_currency }}
+                            {% if item.is_adjusted %}
+                            <div class="muted">Корректировка{% if item.adjustment_notes %}: {{ item.adjustment_notes }}{% endif %}</div>
+                            <div class="muted">Расчетно: {{ item.computed_interest_amount|floatformat:2 }} {{ asset.price_currency }}</div>
+                            {% endif %}
+                        </td>
+                        <td class="mono">{{ item.balance_after|floatformat:2 }} {{ asset.price_currency }}</td>
+                        <td>
+                            <button
+                                class="btn"
+                                hx-get="{% url 'portfolio:capitalization-adjustment-form' asset.id item.capitalization_date|date:'Y-m-d' %}"
+                                hx-target="#modal-root"
+                                hx-swap="innerHTML"
+                                type="button"
+                            >
+                                {% if item.is_adjusted %}Изменить{% else %}Скорректировать{% endif %}
+                            </button>
+                            {% if item.is_adjusted %}
+                            <form hx-post="{% url 'portfolio:capitalization-adjustment-delete' item.adjustment_id %}" hx-target="#dashboard-content" hx-swap="innerHTML" hx-confirm="Удалить корректировку капитализации от {{ item.capitalization_date|date:'d.m.Y' }}?" style="display:inline-block; margin-left:8px;">
+                                {% csrf_token %}
+                                <button class="btn" type="submit">Сбросить</button>
+                            </form>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="7" class="muted">Капитализация еще не начислялась.</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>

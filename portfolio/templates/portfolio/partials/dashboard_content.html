@@ -1,0 +1,67 @@
+{% include "portfolio/partials/messages.html" %}
+<div id="modal-root" hx-swap-oob="innerHTML"></div>
+
+<section class="toolbar" aria-label="Быстрые действия">
+    <div class="toolbar-status">
+        <div>
+            <strong>Курсы НБРБ</strong>
+            {% if latest_rate_date %}
+            <span>На ближайшую доступную дату: {{ latest_rate_date|date:'d.m.Y' }}</span>
+            {% if base_currency_rate_to_byn %}
+            <span>1 {{ base_currency_symbol }} = {{ base_currency_rate_to_byn|floatformat:4 }} BYN</span>
+            {% endif %}
+            {% else %}
+            <span>Курсы еще не загружены</span>
+            {% endif %}
+        </div>
+    </div>
+    <button class="action-button action-button--toolbar" hx-get="{% url 'portfolio:account-form' %}" hx-target="#modal-root" hx-swap="innerHTML" type="button">
+        <strong>Добавить банк</strong>
+    </button>
+    <button class="action-button action-button--toolbar" hx-get="{% url 'portfolio:account-topup-form' %}" hx-target="#modal-root" hx-swap="innerHTML" type="button">
+        <strong>Пополнить счет</strong>
+    </button>
+    <button class="action-button action-button--toolbar" hx-get="{% url 'portfolio:deposit-form' %}" hx-target="#modal-root" hx-swap="innerHTML" type="button">
+        <strong>Добавить депозит</strong>
+    </button>
+</section>
+
+<div class="grid">
+    <section class="card card--span-4 stat">
+        <span class="label">Базовая валюта</span>
+        <span class="value">{{ base_currency }}</span>
+    </section>
+    <section class="card card--span-4 stat">
+        <span class="label">Стоимость портфеля</span>
+        <span class="value mono">{{ portfolio_total|floatformat:2 }} {{ base_currency }}</span>
+    </section>
+    <section class="card card--span-4 stat">
+        <span class="label">Счетов</span>
+        <span class="value">{{ account_rows|length }}</span>
+    </section>
+
+    <section class="card card--span-12">
+        <h2>Портфель</h2>
+        {% include "portfolio/partials/portfolio_table.html" %}
+    </section>
+
+    <section class="card card--span-4">
+        <h2>Сводка по классам</h2>
+        {% include "portfolio/partials/portfolio_summary.html" %}
+    </section>
+
+    <section class="card card--span-8">
+        <h2>Счета</h2>
+        {% include "portfolio/partials/accounts_table.html" %}
+    </section>
+
+    <section class="card card--span-6">
+        <h2>История операций</h2>
+        {% include "portfolio/partials/transactions_table.html" %}
+    </section>
+
+    <section class="card card--span-6">
+        <h2>История переводов</h2>
+        {% include "portfolio/partials/transfers_table.html" %}
+    </section>
+</div>

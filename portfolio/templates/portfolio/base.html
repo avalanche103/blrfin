@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{% block title %}Дашборд инвестиций{% endblock %}</title>
+    <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+    <style>
+        :root {
+            --bg: #f4efe6;
+            --surface: rgba(255, 250, 242, 0.92);
+            --panel: #fffaf2;
+            --line: #dbcdb6;
+            --text: #1d1b19;
+            --muted: #6e665d;
+            --accent: #1e6b59;
+            --accent-soft: #dfeee8;
+            --warn: #8e4b2c;
+            --danger: #b53f31;
+            --shadow: 0 18px 48px rgba(50, 33, 15, 0.08);
+        }
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            font-family: Georgia, "Times New Roman", serif;
+            color: var(--text);
+            background:
+                radial-gradient(circle at top left, rgba(30, 107, 89, 0.18), transparent 28%),
+                radial-gradient(circle at top right, rgba(181, 63, 49, 0.12), transparent 22%),
+                linear-gradient(180deg, #f8f3ea 0%, var(--bg) 100%);
+        }
+        .shell {
+            max-width: 1440px;
+            margin: 0 auto;
+            padding: 32px 20px 48px;
+        }
+        .hero {
+            display: flex;
+            justify-content: space-between;
+            align-items: end;
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+        .hero h1 {
+            margin: 0;
+            font-size: clamp(2rem, 4vw, 3.5rem);
+            font-weight: 700;
+            letter-spacing: -0.03em;
+        }
+        .hero p {
+            margin: 8px 0 0;
+            color: var(--muted);
+            max-width: 760px;
+        }
+        .toolbar {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            margin-bottom: 18px;
+        }
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(12, 1fr);
+            gap: 16px;
+        }
+        .card {
+            grid-column: span 12;
+            background: var(--surface);
+            border: 1px solid rgba(219, 205, 182, 0.8);
+            border-radius: 18px;
+            box-shadow: var(--shadow);
+            padding: 18px;
+            backdrop-filter: blur(12px);
+        }
+        .card h2, .card h3 {
+            margin-top: 0;
+            margin-bottom: 14px;
+        }
+        .card--span-3 { grid-column: span 3; }
+        .card--span-4 { grid-column: span 4; }
+        .card--span-6 { grid-column: span 6; }
+        .card--span-8 { grid-column: span 8; }
+        .card--span-12 { grid-column: span 12; }
+        .stat {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+        .stat .label { color: var(--muted); font-size: 0.95rem; }
+        .stat .value { font-size: 1.8rem; font-weight: 700; }
+        .forms-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 16px;
+        }
+        .action-grid {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 14px;
+        }
+        .action-button {
+            border: 1px solid rgba(219, 205, 182, 0.8);
+            border-radius: 16px;
+            background: rgba(255, 255, 255, 0.75);
+            color: var(--text);
+            padding: 16px;
+            text-align: left;
+            font: inherit;
+            cursor: pointer;
+            box-shadow: var(--shadow);
+        }
+        .action-button--toolbar {
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            padding: 12px 16px;
+            border-radius: 999px;
+            background: rgba(255, 250, 242, 0.88);
+            box-shadow: 0 12px 30px rgba(50, 33, 15, 0.08);
+        }
+        .action-button--toolbar strong {
+            margin: 0;
+            font-size: 0.98rem;
+        }
+        .action-button--toolbar span {
+            display: none;
+        }
+        .toolbar-status {
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            padding: 12px 16px;
+            border-radius: 999px;
+            background: rgba(255, 250, 242, 0.88);
+            border: 1px solid rgba(219, 205, 182, 0.8);
+            box-shadow: 0 12px 30px rgba(50, 33, 15, 0.08);
+        }
+        .toolbar-status strong {
+            display: block;
+            font-size: 0.98rem;
+        }
+        .toolbar-status span {
+            display: block;
+            color: var(--muted);
+            font-size: 0.92rem;
+        }
+        .action-button strong {
+            display: block;
+            font-size: 1.05rem;
+            margin-bottom: 6px;
+        }
+        .action-button span {
+            display: block;
+            color: var(--muted);
+            font-size: 0.92rem;
+        }
+        #modal-root {
+            position: fixed;
+            inset: 0;
+            z-index: 50;
+            pointer-events: none;
+        }
+        .modal-backdrop {
+            position: absolute;
+            inset: 0;
+            background: rgba(18, 16, 14, 0.45);
+            backdrop-filter: blur(6px);
+            pointer-events: auto;
+        }
+        .modal-shell {
+            position: relative;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 24px;
+            pointer-events: auto;
+        }
+        .modal-card {
+            width: min(720px, 100%);
+            max-height: calc(100vh - 48px);
+            overflow: auto;
+            background: #fffaf2;
+            border: 1px solid rgba(219, 205, 182, 0.95);
+            border-radius: 22px;
+            box-shadow: 0 30px 80px rgba(25, 20, 14, 0.2);
+            padding: 22px;
+        }
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: start;
+            gap: 12px;
+            margin-bottom: 14px;
+        }
+        .modal-close {
+            background: transparent;
+            color: var(--muted);
+            border: 1px solid rgba(219, 205, 182, 0.8);
+        }
+        .form-errors {
+            margin: 0 0 12px;
+            padding: 12px 14px;
+            border-radius: 12px;
+            background: #f7dbd7;
+            color: var(--danger);
+        }
+        .form-errors ul {
+            margin: 8px 0 0;
+            padding-left: 18px;
+        }
+        .visually-hidden {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            padding: 0;
+            margin: -1px;
+            overflow: hidden;
+            clip: rect(0, 0, 0, 0);
+            white-space: nowrap;
+            border: 0;
+        }
+        form { display: grid; gap: 10px; }
+        label { display: grid; gap: 6px; font-size: 0.95rem; color: var(--muted); }
+        .form-control, select, textarea, input {
+            width: 100%;
+            border: 1px solid var(--line);
+            border-radius: 12px;
+            padding: 10px 12px;
+            background: #fff;
+            color: var(--text);
+            font: inherit;
+        }
+        textarea { min-height: 88px; resize: vertical; }
+        .btn {
+            border: 0;
+            border-radius: 999px;
+            padding: 10px 16px;
+            cursor: pointer;
+            background: var(--accent);
+            color: #fff;
+            font-weight: 700;
+        }
+        .btn--muted { background: #4f5b57; }
+        .messages { display: grid; gap: 8px; margin-bottom: 14px; }
+        .message {
+            padding: 12px 14px;
+            border-radius: 12px;
+            background: var(--accent-soft);
+        }
+        .message.error { background: #f7dbd7; color: var(--danger); }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.95rem;
+        }
+        th, td {
+            border-bottom: 1px solid rgba(219, 205, 182, 0.75);
+            padding: 10px 8px;
+            text-align: left;
+            vertical-align: top;
+        }
+        th { color: var(--muted); font-weight: 600; }
+        .muted { color: var(--muted); }
+        .mono { font-variant-numeric: tabular-nums; }
+        .stack { display: grid; gap: 16px; }
+        @media (max-width: 1100px) {
+            .card--span-3, .card--span-4, .card--span-6, .card--span-8 { grid-column: span 12; }
+            .forms-grid { grid-template-columns: 1fr; }
+            .action-grid { grid-template-columns: 1fr; }
+            .toolbar { gap: 10px; }
+        }
+    </style>
+    {% block head %}{% endblock %}
+</head>
+<body>
+    <div id="modal-root"></div>
+    <div class="shell">
+        <div class="hero">
+            <div>
+                <h1>Личный инвестиционный дашборд</h1>
+                <p>Локальный MVP на Django + HTMX + SQLite с API внутри проекта и архитектурой, которую можно перенести на PostgreSQL и GCP без перестройки слоев.</p>
+            </div>
+        </div>
+        {% block content %}{% endblock %}
+    </div>
+    <script>
+        (() => {
+            const closeModal = () => {
+                const modalRoot = document.getElementById('modal-root');
+                if (modalRoot) {
+                    modalRoot.innerHTML = '';
+                }
+            };
+
+            document.addEventListener('click', (event) => {
+                if (event.target.closest('[data-close-modal]')) {
+                    closeModal();
+                    return;
+                }
+                if (event.target.matches('[data-modal-backdrop]')) {
+                    closeModal();
+                }
+            });
+
+            document.addEventListener('keydown', (event) => {
+                if (event.key === 'Escape') {
+                    closeModal();
+                }
+            });
+        })();
+    </script>
+</body>
+</html>
