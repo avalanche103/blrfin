@@ -9,3 +9,9 @@
     {{ form.as_p }}
     <button class="btn" type="submit">{{ submit_label }}</button>
 </form>
+{% if delete_action_url %}
+<form hx-post="{{ delete_action_url }}" hx-target="#dashboard-content" hx-swap="innerHTML" {% if delete_confirm %}hx-confirm="{{ delete_confirm }}"{% endif %} style="margin-top:12px;">
+    {% csrf_token %}
+    <button class="btn" style="background: var(--danger);" type="submit">{{ delete_label|default:'Удалить' }}</button>
+</form>
+{% endif %}

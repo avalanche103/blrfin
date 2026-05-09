@@ -30,6 +30,7 @@ urlpatterns = [
     path('deposits/create/', views.create_deposit_view, name='deposit-create'),
     path('assets/create/', views.create_asset_view, name='asset-create'),
     path('assets/<int:asset_id>/update/', views.update_asset_view, name='asset-update'),
+    path('assets/<int:asset_id>/delete/', views.delete_asset_view, name='asset-delete'),
     path('assets/<int:asset_id>/close/', views.close_asset_view, name='asset-close'),
     path('assets/<int:asset_id>/capitalizations/<str:capitalization_date>/update/', views.update_capitalization_adjustment_view, name='capitalization-adjustment-update'),
     path('assets/<int:asset_id>/topup/', views.create_deposit_topup_view, name='deposit-topup-create'),

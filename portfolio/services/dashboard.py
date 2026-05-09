@@ -5,6 +5,7 @@ from portfolio.forms import AccountForm, AssetForm, CSVImportForm, FXRateForm, T
 from .accounts import build_account_rows, list_transactions, list_transfers
 from .portfolio import build_portfolio_snapshot
 from .rates import get_base_currency_rate_to_byn, get_latest_rate_date
+from .transactions import build_upcoming_operations
 
 
 CURRENCY_SYMBOLS = {
@@ -31,6 +32,7 @@ def build_dashboard_context(forms=None):
         'account_rows': account_rows,
         'transactions': list_transactions(),
         'transfers': list_transfers(),
+        'upcoming_operations': build_upcoming_operations(),
         'portfolio_rows': portfolio_snapshot['rows'],
         'portfolio_summary': portfolio_snapshot['summary'],
         'portfolio_total': portfolio_snapshot['total_value'],

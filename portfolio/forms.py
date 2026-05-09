@@ -54,6 +54,13 @@ class AssetForm(StyledModelForm):
 
 
 class DepositAssetForm(AssetForm):
+    fund_from_account = forms.BooleanField(
+        label='Списывать стартовую сумму со счета',
+        required=False,
+        initial=True,
+        help_text='Для ретроввода можно снять галочку, если депозит уже существовал вне системы и исторического списания со счета делать не нужно.',
+    )
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.fields['asset_class'].initial = Asset.AssetClass.DEPOSIT
@@ -85,6 +92,12 @@ class DepositAssetForm(AssetForm):
 
 class DepositTopUpForm(forms.ModelForm):
     topup_date = forms.DateField(label='Дата пополнения', initial=timezone.localdate, widget=forms.DateInput(attrs={'type': 'date'}))
+    fund_from_account = forms.BooleanField(
+        label='Списывать сумму пополнения со счета',
+        required=False,
+        initial=True,
+        help_text='Для ретроввода можно снять галочку, если пополнение уже было сделано вне системы и исторического списания со счета делать не нужно.',
+    )
 
     class Meta:
         model = DepositTopUp
@@ -94,18 +107,23 @@ class DepositTopUpForm(forms.ModelForm):
         self.asset = asset
         super().__init__(*args, **kwargs)
         self.fields['source_account'].queryset = Account.objects.filter(currency=asset.price_currency or asset.account.currency).order_by('name') if asset else Account.objects.none()
+        if self.instance.pk:
+            self.fields['fund_from_account'].initial = bool(self.instance.cash_transaction_id)
         for field in self.fields.values():
             existing = field.widget.attrs.get('class', '')
             field.widget.attrs['class'] = f'{existing} form-control'.strip()
 
     def clean(self):
         cleaned_data = super().clean()
+        should_fund_from_account = cleaned_data.get('fund_from_account', True)
         if self.asset:
             self.instance.asset = self.asset
             self.instance.cash_transaction = self.instance.cash_transaction
-            self.instance.source_account = cleaned_data.get('source_account')
+            self.instance.source_account = cleaned_data.get('source_account') if should_fund_from_account else None
             self.instance.topup_date = cleaned_data.get('topup_date')
             self.instance.amount = cleaned_data.get('amount')
+            if should_fund_from_account and not self.instance.source_account_id:
+                self.add_error('source_account', 'Выберите счет, с которого списываются деньги.')
             self.instance.full_clean()
         return cleaned_data
 

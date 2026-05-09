@@ -1,4 +1,5 @@
 from django.contrib import messages
+from django.core.exceptions import ValidationError
 from django.urls import reverse
 from django.http import HttpRequest, HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
@@ -10,22 +11,27 @@ from .forms import AccountForm, AccountTopUpForm, AssetCloseForm, AssetForm, CSV
 from .services.accounts import delete_account
 from .services.dashboard import build_dashboard_context
 from .services.imports import import_transactions_from_csv
-from .services.rates import sync_nbrb_rates
-from .services.transactions import ACCOUNT_TOPUP_NOTE, add_deposit_topup, build_deposit_capitalization_history, close_asset, create_asset, create_transfer, create_transaction, delete_capitalization_adjustment, delete_deposit_topup, get_current_asset_price, update_deposit_topup, update_asset, upsert_capitalization_adjustment, upsert_fx_rate
+from .services.rates import auto_sync_nbrb_rates_if_stale, sync_nbrb_rates
+from .services.transactions import ACCOUNT_TOPUP_NOTE, add_deposit_topup, build_deposit_capitalization_history, close_asset, create_asset, create_transfer, create_transaction, delete_asset, delete_capitalization_adjustment, delete_deposit_topup, get_current_asset_price, update_deposit_topup, update_asset, upsert_capitalization_adjustment, upsert_fx_rate
 
 
 def _is_htmx(request: HttpRequest) -> bool:
     return request.headers.get('HX-Request') == 'true'
 
 
+def _build_dashboard_context_with_auto_rates(forms=None):
+    auto_sync_nbrb_rates_if_stale()
+    return build_dashboard_context(forms)
+
+
 def _render_dashboard(request: HttpRequest, forms=None, status=200) -> HttpResponse:
-    context = build_dashboard_context(forms)
+    context = _build_dashboard_context_with_auto_rates(forms)
     template_name = 'portfolio/partials/dashboard_content.html' if _is_htmx(request) else 'portfolio/dashboard.html'
     return render(request, template_name, context, status=status)
 
 
 def _render_htmx_success(request: HttpRequest) -> HttpResponse:
-    context = build_dashboard_context()
+    context = _build_dashboard_context_with_auto_rates()
     return render(request, 'portfolio/partials/action_success.html', context)
 
 
@@ -38,6 +44,9 @@ def _render_modal(
     submit_label: str,
     description: str = '',
     enctype: str = '',
+    delete_action_url: str = '',
+    delete_label: str = '',
+    delete_confirm: str = '',
     status: int = 200,
 ) -> HttpResponse:
     context = {
@@ -47,6 +56,9 @@ def _render_modal(
         'action_url': action_url,
         'submit_label': submit_label,
         'enctype': enctype,
+        'delete_action_url': delete_action_url,
+        'delete_label': delete_label,
+        'delete_confirm': delete_confirm,
     }
     return render(request, 'portfolio/partials/action_modal.html', context, status=status)
 
@@ -61,6 +73,13 @@ def _modal_form_response(request: HttpRequest, *, title: str, form, action_name:
         'enctype': enctype,
     }
     return render(request, 'portfolio/partials/action_modal_form.html', context, status=400)
+
+
+def _attach_validation_error(form, exc: ValidationError, *, field_name: str | None = None) -> None:
+    messages = getattr(exc, 'messages', None) or [str(exc)]
+    target_field = field_name if field_name in form.fields else None
+    for message in messages:
+        form.add_error(target_field, message)
 
 
 def _account_form_description() -> str:
@@ -84,7 +103,7 @@ def _asset_close_description() -> str:
 
 
 def _deposit_topup_description() -> str:
-    return 'Выберите счет списания, сумму и дату пополнения. Пополнение уменьшит остаток счета и будет учтено в капитализации или в итоговой выплате депозита.'
+    return 'Выберите сумму и дату пополнения. При необходимости можно снять галочку и не списывать это пополнение со счета, если это ретроввод уже существовавшего пополнения.'
 
 
 def _deposit_history_description() -> str:
@@ -173,6 +192,9 @@ def asset_edit_form_view(request: HttpRequest, asset_id: int) -> HttpResponse:
         action_url=reverse('portfolio:asset-update', args=[asset.id]),
         submit_label='Сохранить изменения',
         description=_asset_form_description(),
+        delete_action_url=reverse('portfolio:asset-delete', args=[asset.id]),
+        delete_label='Удалить продукт',
+        delete_confirm=f'Удалить продукт {asset.symbol}? Это удалит сам продукт и связанную с ним историю.',
     )
 
 
@@ -412,9 +434,13 @@ def delete_account_view(request: HttpRequest, account_id: int) -> HttpResponse:
 def create_asset_view(request: HttpRequest) -> HttpResponse:
     form = AssetForm(request.POST)
     if form.is_valid():
-        asset = create_asset(form.cleaned_data)
-        messages.success(request, f'Актив {asset.symbol} сохранен.')
-        return redirect('portfolio:dashboard') if not _is_htmx(request) else _render_htmx_success(request)
+        try:
+            asset = create_asset(form.cleaned_data)
+        except ValidationError as exc:
+            _attach_validation_error(form, exc)
+        else:
+            messages.success(request, f'Актив {asset.symbol} сохранен.')
+            return redirect('portfolio:dashboard') if not _is_htmx(request) else _render_htmx_success(request)
     if _is_htmx(request):
         return _modal_form_response(
             request,
@@ -431,9 +457,13 @@ def create_asset_view(request: HttpRequest) -> HttpResponse:
 def create_deposit_view(request: HttpRequest) -> HttpResponse:
     form = DepositAssetForm(request.POST)
     if form.is_valid():
-        asset = create_asset(form.cleaned_data)
-        messages.success(request, f'Депозит {asset.symbol} сохранен.')
-        return redirect('portfolio:dashboard') if not _is_htmx(request) else _render_htmx_success(request)
+        try:
+            asset = create_asset(form.cleaned_data)
+        except ValidationError as exc:
+            _attach_validation_error(form, exc, field_name='deposit_initial_amount')
+        else:
+            messages.success(request, f'Депозит {asset.symbol} сохранен.')
+            return redirect('portfolio:dashboard') if not _is_htmx(request) else _render_htmx_success(request)
     if _is_htmx(request):
         return _render_modal(
             request,
@@ -452,9 +482,13 @@ def update_asset_view(request: HttpRequest, asset_id: int) -> HttpResponse:
     asset = get_object_or_404(AssetForm._meta.model, pk=asset_id)
     form = AssetForm(request.POST, instance=asset)
     if form.is_valid():
-        asset = update_asset(asset, form.cleaned_data)
-        messages.success(request, f'Актив {asset.symbol} обновлен.')
-        return redirect('portfolio:dashboard') if not _is_htmx(request) else _render_htmx_success(request)
+        try:
+            asset = update_asset(asset, form.cleaned_data)
+        except ValidationError as exc:
+            _attach_validation_error(form, exc)
+        else:
+            messages.success(request, f'Актив {asset.symbol} обновлен.')
+            return redirect('portfolio:dashboard') if not _is_htmx(request) else _render_htmx_success(request)
     if _is_htmx(request):
         return _render_modal(
             request,
@@ -463,9 +497,25 @@ def update_asset_view(request: HttpRequest, asset_id: int) -> HttpResponse:
             action_url=reverse('portfolio:asset-update', args=[asset.id]),
             submit_label='Сохранить изменения',
             description=_asset_form_description(),
+            delete_action_url=reverse('portfolio:asset-delete', args=[asset.id]),
+            delete_label='Удалить продукт',
+            delete_confirm=f'Удалить продукт {asset.symbol}? Это удалит сам продукт и связанную с ним историю.',
             status=400,
         )
     return _render_dashboard(request, forms={'asset_form': form}, status=400)
+
+
+@require_POST
+def delete_asset_view(request: HttpRequest, asset_id: int) -> HttpResponse:
+    asset = get_object_or_404(AssetForm._meta.model, pk=asset_id)
+    try:
+        asset_symbol = asset.symbol
+        delete_asset(asset)
+        messages.success(request, f'Продукт {asset_symbol} удален.')
+    except ValueError as exc:
+        messages.error(request, str(exc))
+
+    return redirect('portfolio:dashboard') if not _is_htmx(request) else _render_htmx_success(request)
 
 
 @require_POST
@@ -503,14 +553,19 @@ def create_deposit_topup_view(request: HttpRequest, asset_id: int) -> HttpRespon
     asset = get_object_or_404(AssetForm._meta.model, pk=asset_id)
     form = DepositTopUpForm(request.POST, asset=asset)
     if form.is_valid():
-        add_deposit_topup(
-            asset,
-            source_account=form.cleaned_data['source_account'],
-            topup_date=form.cleaned_data['topup_date'],
-            amount=form.cleaned_data['amount'],
-        )
-        messages.success(request, f'Пополнение депозита {asset.symbol} сохранено.')
-        return redirect('portfolio:dashboard') if not _is_htmx(request) else _render_htmx_success(request)
+        try:
+            add_deposit_topup(
+                asset,
+                source_account=form.cleaned_data['source_account'],
+                topup_date=form.cleaned_data['topup_date'],
+                amount=form.cleaned_data['amount'],
+                fund_from_account=form.cleaned_data['fund_from_account'],
+            )
+        except ValidationError as exc:
+            _attach_validation_error(form, exc, field_name='amount')
+        else:
+            messages.success(request, f'Пополнение депозита {asset.symbol} сохранено.')
+            return redirect('portfolio:dashboard') if not _is_htmx(request) else _render_htmx_success(request)
     if _is_htmx(request):
         return _render_modal(
             request,
@@ -566,14 +621,19 @@ def update_deposit_topup_view(request: HttpRequest, topup_id: int) -> HttpRespon
     topup = get_object_or_404(DepositTopUpForm._meta.model.objects.select_related('asset', 'source_account'), pk=topup_id)
     form = DepositTopUpForm(request.POST, instance=topup, asset=topup.asset)
     if form.is_valid():
-        update_deposit_topup(
-            topup,
-            source_account=form.cleaned_data['source_account'],
-            topup_date=form.cleaned_data['topup_date'],
-            amount=form.cleaned_data['amount'],
-        )
-        messages.success(request, f'Пополнение депозита {topup.asset.symbol} обновлено.')
-        return redirect('portfolio:dashboard') if not _is_htmx(request) else _render_htmx_success(request)
+        try:
+            update_deposit_topup(
+                topup,
+                source_account=form.cleaned_data['source_account'],
+                topup_date=form.cleaned_data['topup_date'],
+                amount=form.cleaned_data['amount'],
+                fund_from_account=form.cleaned_data['fund_from_account'],
+            )
+        except ValidationError as exc:
+            _attach_validation_error(form, exc, field_name='amount')
+        else:
+            messages.success(request, f'Пополнение депозита {topup.asset.symbol} обновлено.')
+            return redirect('portfolio:dashboard') if not _is_htmx(request) else _render_htmx_success(request)
     if _is_htmx(request):
         return _render_modal(
             request,

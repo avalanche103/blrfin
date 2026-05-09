@@ -5,6 +5,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import urlopen
 
 from django.conf import settings
+from django.utils import timezone
 
 from portfolio.models import FXRate
 
@@ -25,11 +26,17 @@ def _quantize_rate(value: Decimal) -> Decimal:
     return value.quantize(Decimal('0.000001'), rounding=ROUND_HALF_UP)
 
 
-def fetch_nbrb_daily_rates(target_date=None, lookback_days=10):
+def _nearest_probe_dates(requested_date, lookaround_days):
+    yield requested_date
+    for offset in range(1, lookaround_days + 1):
+        yield requested_date + timedelta(days=offset)
+        yield requested_date - timedelta(days=offset)
+
+
+def fetch_nbrb_daily_rates(target_date=None, lookaround_days=10):
     requested_date = target_date or date.today()
 
-    for offset in range(lookback_days + 1):
-        probe_date = requested_date - timedelta(days=offset)
+    for probe_date in _nearest_probe_dates(requested_date, lookaround_days):
         endpoint = f"{settings.NBRB_API_URL.rstrip('/')}/rates?periodicity=0&ondate={probe_date.isoformat()}"
         payload = _fetch_json(endpoint)
         if not isinstance(payload, list) or not payload:
@@ -52,7 +59,7 @@ def fetch_nbrb_daily_rates(target_date=None, lookback_days=10):
             'rates_to_byn': rates_to_byn,
         }
 
-    raise RuntimeError('НБРБ не вернул курсы ни на выбранную, ни на ближайшие даты.')
+    raise RuntimeError('НБРБ не вернул курсы ни на выбранную, ни на ближайшие доступные даты.')
 
 
 def sync_nbrb_rates(base_currency=None, target_date=None):
@@ -97,14 +104,34 @@ def sync_nbrb_rates(base_currency=None, target_date=None):
     }
 
 
+def _get_latest_rate_record(base_currency=None):
+    target = (base_currency or settings.BASE_CURRENCY).upper()
+    return FXRate.objects.filter(to_currency=target).order_by('-effective_date', '-updated_at').first()
+
+
+def should_auto_sync_nbrb_rates(base_currency=None):
+    latest = _get_latest_rate_record(base_currency)
+    if not latest:
+        return True
+    return timezone.localtime(latest.updated_at).date() < timezone.localdate()
+
+
+def auto_sync_nbrb_rates_if_stale(base_currency=None, target_date=None):
+    if not should_auto_sync_nbrb_rates(base_currency):
+        return None
+    try:
+        return sync_nbrb_rates(base_currency=base_currency, target_date=target_date)
+    except Exception:
+        return None
+
+
 def get_fx_rate_snapshot(base_currency=None):
     target = (base_currency or settings.BASE_CURRENCY).upper()
     return FXRate.objects.filter(to_currency=target).order_by('from_currency')
 
 
 def get_latest_rate_date(base_currency=None):
-    target = (base_currency or settings.BASE_CURRENCY).upper()
-    latest = FXRate.objects.filter(to_currency=target).order_by('-effective_date', '-updated_at').first()
+    latest = _get_latest_rate_record(base_currency)
     return latest.effective_date if latest else None
 
 

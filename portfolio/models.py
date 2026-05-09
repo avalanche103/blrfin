@@ -173,8 +173,6 @@ class DepositTopUp(TimestampedModel):
         errors = {}
         if self.asset and self.asset.asset_class != Asset.AssetClass.DEPOSIT:
             errors['asset'] = 'Пополнение доступно только для депозитов.'
-        if not self.source_account_id:
-            errors['source_account'] = 'Выберите счет, с которого списываются деньги.'
         if self.amount <= 0:
             errors['amount'] = 'Сумма пополнения должна быть больше нуля.'
         if self.asset and self.asset.deposit_open_date and self.topup_date < self.asset.deposit_open_date:

@@ -49,7 +49,7 @@
                     {% for topup in topups %}
                     <tr>
                         <td>{{ topup.topup_date|date:'d.m.Y' }}</td>
-                        <td>{{ topup.source_account.name|default:'Удаленный счет' }}</td>
+                        <td>{{ topup.source_account.name|default:'Без списания со счета' }}</td>
                         <td class="mono">{{ topup.amount|floatformat:2 }} {{ asset.price_currency }}</td>
                         <td>
                             <button

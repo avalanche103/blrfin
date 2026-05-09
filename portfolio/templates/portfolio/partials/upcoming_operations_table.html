@@ -1,0 +1,27 @@
+<table>
+    <thead>
+        <tr>
+            <th>Дата</th>
+            <th>Продукт</th>
+            <th>Тип</th>
+            <th>Ожидаемая сумма</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for item in upcoming_operations %}
+        <tr>
+            <td>{{ item.date|date:'d.m.Y' }}</td>
+            <td>
+                <strong>{{ item.asset.symbol }}</strong>
+                <div class="muted">{{ item.asset.name }}</div>
+            </td>
+            <td>{{ item.type_label }}</td>
+            <td class="mono">{{ item.expected_amount|floatformat:2 }} {{ item.currency }}</td>
+        </tr>
+        {% empty %}
+        <tr>
+            <td colspan="4" class="muted">Планируемых операций пока нет.</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>

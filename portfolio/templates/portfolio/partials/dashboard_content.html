@@ -15,6 +15,12 @@
             {% endif %}
         </div>
     </div>
+    <form hx-post="{% url 'portfolio:fx-sync-nbrb' %}" hx-target="#dashboard-content" hx-swap="innerHTML" style="display:inline-flex;">
+        {% csrf_token %}
+        <button class="action-button action-button--toolbar" type="submit">
+            <strong>Обновить курсы</strong>
+        </button>
+    </form>
     <button class="action-button action-button--toolbar" hx-get="{% url 'portfolio:account-form' %}" hx-target="#modal-root" hx-swap="innerHTML" type="button">
         <strong>Добавить банк</strong>
     </button>
@@ -53,6 +59,11 @@
     <section class="card card--span-8">
         <h2>Счета</h2>
         {% include "portfolio/partials/accounts_table.html" %}
+    </section>
+
+    <section class="card card--span-6">
+        <h2>Ближайшие операции</h2>
+        {% include "portfolio/partials/upcoming_operations_table.html" %}
     </section>
 
     <section class="card card--span-6">
