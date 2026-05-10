@@ -8,13 +8,14 @@ from django.utils.dateparse import parse_date
 from django.utils import timezone
 from django.db import transaction as db_transaction
 
-from portfolio.models import Asset, DepositCapitalizationAdjustment, DepositRateChange, DepositTopUp, FXRate, Transaction
+from portfolio.models import Asset, DepositCapitalizationAdjustment, DepositInterestPayout, DepositRateChange, DepositTopUp, FXRate, Transaction
 
 
 SYSTEM_DEPOSIT_NOTE = '__system_deposit_position__'
 CLOSE_ASSET_NOTE = '__asset_close_payout__'
 DEPOSIT_TOPUP_NOTE = '__deposit_topup__'
 ACCOUNT_TOPUP_NOTE = '__account_topup__'
+DEPOSIT_PAYOUT_NOTE = '__deposit_interest_payout__'
 
 
 def has_system_note(item_or_notes, marker):
@@ -73,6 +74,15 @@ def _add_months(value, months):
     return value.replace(year=year, month=month, day=day)
 
 
+def _semi_monthly_anchor_days(open_day):
+    primary_day = min(max(open_day, 1), 31)
+    if primary_day > 15:
+        secondary_day = primary_day - 15
+    else:
+        secondary_day = primary_day + 15
+    return tuple(sorted({primary_day, secondary_day}))
+
+
 def _contribution_label(asset, contribution_date, amount):
     if asset.deposit_open_date == contribution_date and amount == (asset.deposit_initial_amount or Decimal('0')):
         return 'Начальный взнос'
@@ -106,6 +116,18 @@ def _capitalization_adjustments_by_date(asset):
     return {
         item.capitalization_date: item
         for item in DepositCapitalizationAdjustment.objects.filter(asset=asset)
+    }
+
+
+def _interest_payouts_by_date(asset, effective_end=None):
+    if not asset.pk:
+        return {}
+    queryset = DepositInterestPayout.objects.filter(asset=asset)
+    if effective_end:
+        queryset = queryset.filter(payout_date__lte=effective_end)
+    return {
+        item.payout_date: item
+        for item in queryset.select_related('cash_transaction')
     }
 
 
@@ -160,13 +182,18 @@ def _capitalization_dates(asset, effective_end):
 
     dates = []
     if asset.deposit_interest_payout_frequency == Asset.InterestPayoutFrequency.SEMI_MONTHLY:
-        step = 1
-        while True:
-            candidate = asset.deposit_open_date + timedelta(days=15 * step)
-            if candidate > effective_end:
-                break
-            dates.append(candidate)
-            step += 1
+        anchor_days = _semi_monthly_anchor_days(asset.deposit_open_date.day)
+        current_month = asset.deposit_open_date.replace(day=1)
+        while current_month <= effective_end.replace(day=1):
+            _, days_in_month = monthrange(current_month.year, current_month.month)
+            for day in anchor_days:
+                candidate = current_month.replace(day=min(day, days_in_month))
+                if candidate <= asset.deposit_open_date:
+                    continue
+                if candidate > effective_end:
+                    break
+                dates.append(candidate)
+            current_month = _add_months(current_month, 1)
         return dates
 
     step = 1
@@ -190,9 +217,9 @@ def _simulate_deposit_capitalization(asset):
 
     balance = principal
     current_rate = asset.deposit_annual_rate
-    capitalization_dates = set(_capitalization_dates(asset, effective_end))
     topups_by_date = _deposit_topups_by_date(asset, effective_end)
     adjustments_by_date = _capitalization_adjustments_by_date(asset)
+    capitalization_dates = set(_capitalization_dates(asset, effective_end)) | set(adjustments_by_date)
     rate_changes_by_date = _rate_changes_by_date(asset, effective_end)
 
     history = []
@@ -282,6 +309,17 @@ def build_deposit_capitalization_history(asset):
     return history
 
 
+def build_deposit_interest_payout_history(asset):
+    if asset.asset_class != Asset.AssetClass.DEPOSIT:
+        return []
+    if asset.deposit_interest_payout_method != Asset.InterestPayoutMethod.TO_ACCOUNT:
+        return []
+    if not asset.deposit_open_date or not asset.deposit_annual_rate:
+        return []
+    _, history = _build_deposit_projected_schedule(asset, effective_end=_deposit_effective_end_date(asset))
+    return history
+
+
 def _build_deposit_projected_schedule(asset, *, effective_end):
     principal = _quantize_money(asset.deposit_initial_amount or Decimal('0'))
     if principal <= 0 or not asset.deposit_open_date or not asset.deposit_annual_rate:
@@ -298,11 +336,13 @@ def _build_deposit_projected_schedule(asset, *, effective_end):
 
     balance = principal
     current_rate = asset.deposit_annual_rate
-    event_dates = set(_capitalization_dates(asset, effective_end))
     topups_by_date = _deposit_topups_by_date(asset, effective_end)
     adjustments_by_date = _capitalization_adjustments_by_date(asset)
+    payouts_by_date = _interest_payouts_by_date(asset, effective_end)
     rate_changes_by_date = _rate_changes_by_date(asset, effective_end)
     is_capitalization = asset.deposit_interest_payout_method == Asset.InterestPayoutMethod.CAPITALIZATION
+    event_dates = set(_capitalization_dates(asset, effective_end))
+    event_dates |= set(adjustments_by_date if is_capitalization else payouts_by_date)
 
     schedule = []
     current_period_start = asset.deposit_open_date
@@ -315,8 +355,8 @@ def _build_deposit_projected_schedule(asset, *, effective_end):
     while current_date <= effective_end:
         if current_date in event_dates:
             computed_interest_amount = _quantize_money(period_interest_total)
-            adjustment = adjustments_by_date.get(current_date) if is_capitalization else None
-            interest_amount = adjustment.interest_amount if adjustment else computed_interest_amount
+            record = adjustments_by_date.get(current_date) if is_capitalization else payouts_by_date.get(current_date)
+            interest_amount = record.interest_amount if record else computed_interest_amount
             balance_before = _quantize_money(balance)
             balance_after = _quantize_money(balance_before + interest_amount) if is_capitalization else balance_before
             schedule.append(
@@ -332,9 +372,11 @@ def _build_deposit_projected_schedule(asset, *, effective_end):
                     'annual_rate': current_rate,
                     'balance_before': balance_before,
                     'balance_after': balance_after,
-                    'is_adjusted': bool(adjustment),
-                    'adjustment_id': adjustment.id if adjustment else None,
-                    'adjustment_notes': adjustment.notes if adjustment else '',
+                    'is_adjusted': bool(record),
+                    'adjustment_id': record.id if record else None,
+                    'adjustment_notes': record.notes if record else '',
+                    'cash_transaction_id': getattr(record, 'cash_transaction_id', None),
+                    'credits_account': bool(getattr(record, 'cash_transaction_id', None)),
                 }
             )
             balance = balance_after
@@ -432,6 +474,65 @@ def delete_capitalization_adjustment(adjustment):
 
 
 @db_transaction.atomic
+def upsert_deposit_interest_payout(asset, *, payout_date, interest_amount, notes='', credit_to_account=False, payout_record=None):
+    payout_date = _normalize_date(payout_date)
+    interest_amount = _normalize_decimal(interest_amount)
+    if payout_record is None:
+        payout_record = DepositInterestPayout(asset=asset)
+
+    payout_record.asset = asset
+    payout_record.payout_date = payout_date
+    payout_record.interest_amount = interest_amount
+    payout_record.notes = notes
+    payout_record.full_clean()
+    payout_record.save()
+
+    transaction = payout_record.cash_transaction
+    should_credit_account = bool(credit_to_account and payout_date and payout_date >= timezone.localdate())
+    if should_credit_account:
+        transaction_payload = {
+            'transaction_type': Transaction.TransactionType.DEPOSIT,
+            'destination_account': asset.account,
+            'asset': asset,
+            'amount': interest_amount,
+            'currency': asset.price_currency or asset.account.currency,
+            'fee': Decimal('0'),
+            'asset_quantity': Decimal('0'),
+            'unit_price': None,
+            'status': Transaction.Status.COMPLETED,
+            'occurred_at': _payout_datetime(payout_date),
+            'notes': DEPOSIT_PAYOUT_NOTE if not notes else f'{DEPOSIT_PAYOUT_NOTE}\n{notes}',
+        }
+        if transaction:
+            for key, value in transaction_payload.items():
+                setattr(transaction, key, value)
+            transaction.full_clean()
+            transaction.save()
+        else:
+            transaction = Transaction(**transaction_payload)
+            transaction.full_clean()
+            transaction.save()
+            payout_record.cash_transaction = transaction
+            payout_record.save(update_fields=['cash_transaction', 'updated_at'])
+    elif transaction:
+        transaction.delete()
+        payout_record.cash_transaction = None
+        payout_record.save(update_fields=['cash_transaction', 'updated_at'])
+
+    update_asset(asset, _asset_payload_from_instance(asset))
+    return payout_record
+
+
+@db_transaction.atomic
+def delete_deposit_interest_payout(payout_record):
+    asset = payout_record.asset
+    if payout_record.cash_transaction_id:
+        payout_record.cash_transaction.delete()
+    payout_record.delete()
+    update_asset(asset, _asset_payload_from_instance(asset))
+
+
+@db_transaction.atomic
 def upsert_deposit_rate_change(asset, *, effective_date, annual_rate, notes='', rate_change=None):
     if rate_change is None:
         rate_change = DepositRateChange(asset=asset)
@@ -502,6 +603,11 @@ def _asset_close_datetime(closed_at):
 
 def _topup_datetime(topup_date):
     naive = datetime.combine(topup_date or timezone.localdate(), time.min)
+    return timezone.make_aware(naive, timezone.get_current_timezone())
+
+
+def _payout_datetime(payout_date):
+    naive = datetime.combine(payout_date or timezone.localdate(), time.min)
     return timezone.make_aware(naive, timezone.get_current_timezone())
 
 
@@ -798,6 +904,7 @@ def delete_asset(asset):
     Transaction.objects.filter(asset=asset).delete()
     DepositTopUp.objects.filter(asset=asset).delete()
     DepositCapitalizationAdjustment.objects.filter(asset=asset).delete()
+    DepositInterestPayout.objects.filter(asset=asset).delete()
     DepositRateChange.objects.filter(asset=asset).delete()
     asset.delete()
 
@@ -826,9 +933,11 @@ def close_asset(asset, destination_account, closed_at):
 
 
 def upsert_fx_rate(data):
+    effective_date = data.get('effective_date')
     pair = FXRate.objects.filter(
         from_currency=data['from_currency'].upper(),
         to_currency=data['to_currency'].upper(),
+        effective_date=effective_date,
     ).first()
     if pair:
         for key, value in data.items():
@@ -882,6 +991,8 @@ def serialize_transaction(item):
         transaction_type_display = 'Пополнение депозита'
     elif has_system_note(item, ACCOUNT_TOPUP_NOTE):
         transaction_type_display = 'Пополнение счета'
+    elif has_system_note(item, DEPOSIT_PAYOUT_NOTE):
+        transaction_type_display = 'Выплата процентов по депозиту'
     else:
         transaction_type_display = item.get_transaction_type_display()
 

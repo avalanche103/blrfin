@@ -1,3 +1,4 @@
+<div class="table-wrap">
 <table>
     <thead>
         <tr>
@@ -6,18 +7,17 @@
             <th>Источник</th>
             <th>Назначение</th>
             <th>Сумма</th>
-            <th>Комиссия</th>
             <th>Статус</th>
         </tr>
     </thead>
     <tbody>
         {% for item in transfers %}
         <tr>
-            <td>{{ item.occurred_at|date:'Y-m-d H:i' }}</td>
+            <td>{{ item.occurred_at|date:'d.m.Y' }}</td>
             <td>
                 {% if item.asset %}
-                    {{ item.asset.symbol }}
-                    <div class="muted">{{ item.asset_quantity|floatformat:8 }}</div>
+                    <span class="ticker">{{ item.asset.symbol }}</span>
+                    <div class="muted mono">{{ item.asset_quantity|floatformat:8 }}</div>
                 {% else %}
                     <span class="muted">Деньги</span>
                 {% endif %}
@@ -25,13 +25,15 @@
             <td>{{ item.source_account }}</td>
             <td>{{ item.destination_account }}</td>
             <td class="mono">{{ item.amount|floatformat:2 }} {{ item.currency }}</td>
-            <td class="mono">{{ item.fee|floatformat:2 }} {{ item.currency }}</td>
-            <td>{{ item.get_status_display }}</td>
+            <td>
+                <span class="status-pill {% if item.status == 'completed' %}status-pill--success{% elif item.status == 'pending' %}status-pill--warning{% elif item.status == 'failed' or item.status == 'canceled' %}status-pill--danger{% endif %}">{{ item.get_status_display }}</span>
+            </td>
         </tr>
         {% empty %}
         <tr>
-            <td colspan="7" class="muted">Переводов пока нет.</td>
+            <td colspan="6" class="muted">Переводов пока нет.</td>
         </tr>
         {% endfor %}
     </tbody>
 </table>
+</div>

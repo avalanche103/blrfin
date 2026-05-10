@@ -7,12 +7,12 @@ from django.utils import timezone
 from django.utils.dateparse import parse_date
 from django.views.decorators.http import require_GET, require_POST
 
-from .forms import AccountForm, AccountTopUpForm, AssetCloseForm, AssetForm, CSVImportForm, DepositAssetForm, DepositCapitalizationAdjustmentForm, DepositRateChangeForm, DepositTopUpForm, FXRateForm, TransactionForm, TransferForm
+from .forms import AccountForm, AccountTopUpForm, AssetCloseForm, AssetForm, CSVImportForm, DepositAssetForm, DepositCapitalizationAdjustmentForm, DepositInterestPayoutForm, DepositRateChangeForm, DepositTopUpForm, FXRateForm, TransactionForm, TransferForm
 from .services.accounts import delete_account
 from .services.dashboard import build_dashboard_context
 from .services.imports import import_transactions_from_csv
 from .services.rates import auto_sync_nbrb_rates_if_stale, sync_nbrb_rates
-from .services.transactions import ACCOUNT_TOPUP_NOTE, add_deposit_topup, build_deposit_capitalization_history, close_asset, create_asset, create_transfer, create_transaction, delete_asset, delete_capitalization_adjustment, delete_deposit_rate_change, delete_deposit_topup, get_current_asset_price, get_deposit_effective_rate, update_deposit_topup, update_asset, upsert_capitalization_adjustment, upsert_deposit_rate_change, upsert_fx_rate
+from .services.transactions import ACCOUNT_TOPUP_NOTE, add_deposit_topup, build_deposit_capitalization_history, build_deposit_interest_payout_history, close_asset, create_asset, create_transfer, create_transaction, delete_asset, delete_capitalization_adjustment, delete_deposit_interest_payout, delete_deposit_rate_change, delete_deposit_topup, get_current_asset_price, get_deposit_effective_rate, update_deposit_topup, update_asset, upsert_capitalization_adjustment, upsert_deposit_interest_payout, upsert_deposit_rate_change, upsert_fx_rate
 
 
 def _is_htmx(request: HttpRequest) -> bool:
@@ -114,6 +114,10 @@ def _deposit_history_description() -> str:
 
 def _capitalization_adjustment_description() -> str:
     return 'Если банк начислил проценты немного иначе, сохраните фактическую сумму процентов для конкретной даты капитализации.'
+
+
+def _deposit_payout_description() -> str:
+    return 'Сохраните фактическую выплату процентов. Для прошлых дат запись останется в истории депозита и не изменит остаток счета.'
 
 
 def _deposit_rate_change_description() -> str:
@@ -234,7 +238,7 @@ def deposit_topup_form_view(request: HttpRequest, asset_id: int) -> HttpResponse
 
 @require_GET
 def deposit_history_view(request: HttpRequest, asset_id: int) -> HttpResponse:
-    asset = get_object_or_404(AssetForm._meta.model.objects.prefetch_related('topups__source_account', 'rate_changes'), pk=asset_id)
+    asset = get_object_or_404(AssetForm._meta.model.objects.prefetch_related('topups__source_account', 'rate_changes', 'interest_payouts__cash_transaction'), pk=asset_id)
     asset.current_price = get_current_asset_price(asset)
     context = {
         'title': f'История депозита {asset.symbol}',
@@ -244,8 +248,32 @@ def deposit_history_view(request: HttpRequest, asset_id: int) -> HttpResponse:
         'current_annual_rate': get_deposit_effective_rate(asset),
         'rate_changes': asset.rate_changes.all(),
         'capitalization_history': build_deposit_capitalization_history(asset),
+        'interest_payout_history': build_deposit_interest_payout_history(asset),
     }
     return render(request, 'portfolio/partials/deposit_history_modal.html', context)
+
+
+@require_GET
+def deposit_interest_payout_form_view(request: HttpRequest, asset_id: int, payout_date: str) -> HttpResponse:
+    asset = get_object_or_404(AssetForm._meta.model, pk=asset_id)
+    parsed_date = parse_date(payout_date)
+    payout_record = DepositInterestPayoutForm._meta.model.objects.filter(asset=asset, payout_date=parsed_date).first()
+    initial = None
+    if not payout_record:
+        row = next((item for item in build_deposit_interest_payout_history(asset) if item['operation_date'] == parsed_date), None)
+        initial = {
+            'payout_date': parsed_date,
+            'interest_amount': row['interest_amount'] if row else None,
+        }
+    form = DepositInterestPayoutForm(instance=payout_record, initial=initial, asset=asset)
+    return _render_modal(
+        request,
+        title='Скорректировать выплату процентов',
+        form=form,
+        action_url=reverse('portfolio:deposit-interest-payout-update', args=[asset.id, payout_date]),
+        submit_label='Сохранить выплату',
+        description=_deposit_payout_description(),
+    )
 
 
 @require_GET
@@ -644,6 +672,36 @@ def update_capitalization_adjustment_view(request: HttpRequest, asset_id: int, c
 
 
 @require_POST
+def update_deposit_interest_payout_view(request: HttpRequest, asset_id: int, payout_date: str) -> HttpResponse:
+    asset = get_object_or_404(AssetForm._meta.model, pk=asset_id)
+    parsed_date = parse_date(payout_date)
+    payout_record = DepositInterestPayoutForm._meta.model.objects.filter(asset=asset, payout_date=parsed_date).first()
+    form = DepositInterestPayoutForm(request.POST, instance=payout_record, asset=asset)
+    if form.is_valid():
+        upsert_deposit_interest_payout(
+            asset,
+            payout_date=form.cleaned_data['payout_date'],
+            interest_amount=form.cleaned_data['interest_amount'],
+            notes=form.cleaned_data['notes'],
+            credit_to_account=form.cleaned_data['credit_to_account'],
+            payout_record=payout_record,
+        )
+        messages.success(request, f'Выплата процентов по депозиту {asset.symbol} сохранена.')
+        return redirect('portfolio:dashboard') if not _is_htmx(request) else _render_htmx_success(request)
+    if _is_htmx(request):
+        return _render_modal(
+            request,
+            title='Скорректировать выплату процентов',
+            form=form,
+            action_url=reverse('portfolio:deposit-interest-payout-update', args=[asset.id, payout_date]),
+            submit_label='Сохранить выплату',
+            description=_deposit_payout_description(),
+            status=400,
+        )
+    return _render_dashboard(request, status=400)
+
+
+@require_POST
 def create_deposit_rate_change_view(request: HttpRequest, asset_id: int) -> HttpResponse:
     asset = get_object_or_404(AssetForm._meta.model, pk=asset_id)
     form = DepositRateChangeForm(request.POST, asset=asset)
@@ -711,6 +769,15 @@ def delete_capitalization_adjustment_view(request: HttpRequest, adjustment_id: i
     asset_symbol = adjustment.asset.symbol
     delete_capitalization_adjustment(adjustment)
     messages.success(request, f'Корректировка капитализации депозита {asset_symbol} удалена.')
+    return redirect('portfolio:dashboard') if not _is_htmx(request) else _render_htmx_success(request)
+
+
+@require_POST
+def delete_deposit_interest_payout_view(request: HttpRequest, payout_id: int) -> HttpResponse:
+    payout_record = get_object_or_404(DepositInterestPayoutForm._meta.model.objects.select_related('asset'), pk=payout_id)
+    asset_symbol = payout_record.asset.symbol
+    delete_deposit_interest_payout(payout_record)
+    messages.success(request, f'Выплата процентов по депозиту {asset_symbol} удалена.')
     return redirect('portfolio:dashboard') if not _is_htmx(request) else _render_htmx_success(request)
 
 

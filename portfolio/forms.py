@@ -1,7 +1,7 @@
 from django import forms
 from django.utils import timezone
 
-from .models import Account, Asset, DepositCapitalizationAdjustment, DepositRateChange, DepositTopUp, FXRate, Transaction
+from .models import Account, Asset, DepositCapitalizationAdjustment, DepositInterestPayout, DepositRateChange, DepositTopUp, FXRate, Transaction
 
 
 class StyledModelForm(forms.ModelForm):
@@ -153,6 +153,41 @@ class DepositCapitalizationAdjustmentForm(forms.ModelForm):
         return cleaned_data
 
 
+class DepositInterestPayoutForm(forms.ModelForm):
+    payout_date = forms.DateField(label='Дата выплаты', widget=forms.DateInput(attrs={'type': 'date'}))
+    credit_to_account = forms.BooleanField(
+        label='Зачислять выплату на счет',
+        required=False,
+        initial=True,
+        help_text='Для прошлых дат запись сохраняется только в истории депозита и не меняет остаток счета.',
+    )
+
+    class Meta:
+        model = DepositInterestPayout
+        fields = ['payout_date', 'interest_amount', 'notes']
+
+    def __init__(self, *args, asset=None, **kwargs):
+        self.asset = asset
+        super().__init__(*args, **kwargs)
+        if self.instance.pk:
+            self.fields['credit_to_account'].initial = bool(self.instance.cash_transaction_id)
+        elif 'payout_date' in self.initial and self.initial['payout_date']:
+            self.fields['credit_to_account'].initial = self.initial['payout_date'] >= timezone.localdate()
+        for field in self.fields.values():
+            existing = field.widget.attrs.get('class', '')
+            field.widget.attrs['class'] = f'{existing} form-control'.strip()
+
+    def clean(self):
+        cleaned_data = super().clean()
+        if self.asset:
+            self.instance.asset = self.asset
+            self.instance.payout_date = cleaned_data.get('payout_date')
+            self.instance.interest_amount = cleaned_data.get('interest_amount')
+            self.instance.notes = cleaned_data.get('notes') or ''
+            self.instance.full_clean()
+        return cleaned_data
+
+
 class DepositRateChangeForm(forms.ModelForm):
     effective_date = forms.DateField(label='Дата начала действия', widget=forms.DateInput(attrs={'type': 'date'}))
 
@@ -208,9 +243,11 @@ class AccountTopUpForm(forms.Form):
 
 
 class FXRateForm(StyledModelForm):
+    effective_date = forms.DateField(initial=timezone.localdate, widget=forms.DateInput(attrs={'type': 'date'}))
+
     class Meta:
         model = FXRate
-        fields = ['from_currency', 'to_currency', 'rate']
+        fields = ['from_currency', 'to_currency', 'effective_date', 'rate']
 
 
 class TransactionForm(StyledModelForm):

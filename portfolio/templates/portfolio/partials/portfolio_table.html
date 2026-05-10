@@ -1,3 +1,4 @@
+<div class="table-wrap">
 <table>
     <thead>
         <tr>
@@ -15,7 +16,7 @@
         {% for row in portfolio_rows %}
         <tr>
             <td>{{ row.asset_class }}</td>
-            <td>{{ row.label }}</td>
+            <td class="ticker">{{ row.label }}</td>
             <td>{{ row.name }}</td>
             <td>{{ row.account_name }}</td>
             <td class="mono">
@@ -34,15 +35,18 @@
             </td>
             <td class="mono">
                 {% if row.annualized_return_pct is not None %}
-                    {{ row.annualized_return_pct|floatformat:2 }}%
+                    <span title="Переоценка: {{ row.revaluation_return_pct|floatformat:2 }}% ({{ row.revaluation_base_value|floatformat:2 }} {{ base_currency }})&#10;Выплаты / капитализация: {{ row.income_return_pct|floatformat:2 }}% ({{ row.income_component_base_value|floatformat:2 }} {{ base_currency }})">
+                        {{ row.annualized_return_pct|floatformat:2 }}%
+                    </span>
                 {% else %}
                     <span class="muted">Нет базы</span>
                 {% endif %}
             </td>
             <td>
                 {% if row.kind == 'asset' %}
+                <div class="button-group">
                 <button
-                    class="btn"
+                    class="btn btn--ghost"
                     hx-get="{% url 'portfolio:asset-edit-form' row.asset_id %}"
                     hx-target="#modal-root"
                     hx-swap="innerHTML"
@@ -52,7 +56,7 @@
                 </button>
                 {% if row.asset_class == 'Депозит' %}
                 <button
-                    class="btn"
+                    class="btn btn--ghost"
                     hx-get="{% url 'portfolio:deposit-history' row.asset_id %}"
                     hx-target="#modal-root"
                     hx-swap="innerHTML"
@@ -61,7 +65,7 @@
                     История
                 </button>
                 <button
-                    class="btn"
+                    class="btn btn--ghost"
                     hx-get="{% url 'portfolio:deposit-topup-form' row.asset_id %}"
                     hx-target="#modal-root"
                     hx-swap="innerHTML"
@@ -79,6 +83,7 @@
                 >
                     Закрыть продукт
                 </button>
+                </div>
                 {% endif %}
             </td>
         </tr>
@@ -89,3 +94,4 @@
         {% endfor %}
     </tbody>
 </table>
+</div>

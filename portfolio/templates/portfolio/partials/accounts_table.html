@@ -1,12 +1,10 @@
+<div class="table-wrap">
 <table>
     <thead>
         <tr>
             <th>Счет</th>
-            <th>Тип</th>
             <th>Валюта</th>
             <th>Баланс</th>
-            <th>Доступно</th>
-            <th>Комиссии</th>
             <th></th>
         </tr>
     </thead>
@@ -17,14 +15,12 @@
                 <strong>{{ row.account.name }}</strong><br>
                 <span class="muted">{{ row.account.description|default:'-' }}</span>
             </td>
-            <td>{{ row.account.get_account_type_display }}</td>
-            <td>{{ row.account.currency }}</td>
+            <td class="ticker">{{ row.account.currency }}</td>
             <td class="mono">{{ row.ledger_balance|floatformat:2 }}</td>
-            <td class="mono">{{ row.available_balance|floatformat:2 }}</td>
-            <td class="mono">{{ row.fees_paid|floatformat:2 }}</td>
             <td>
+                <div class="button-group">
                 <button
-                    class="btn"
+                    class="btn btn--ghost"
                     hx-get="{% url 'portfolio:account-edit-form' row.account.id %}"
                     hx-target="#modal-root"
                     hx-swap="innerHTML"
@@ -33,7 +29,7 @@
                     Редактировать
                 </button>
                 <button
-                    class="btn"
+                    class="btn btn--ghost"
                     hx-get="{% url 'portfolio:account-topup-account-form' row.account.id %}"
                     hx-target="#modal-root"
                     hx-swap="innerHTML"
@@ -43,14 +39,16 @@
                 </button>
                 <form hx-post="{% url 'portfolio:account-delete' row.account.id %}" hx-target="#dashboard-content" hx-swap="innerHTML" hx-confirm="Удалить счет {{ row.account.name }}?" style="display:inline-block; margin-left:8px;">
                     {% csrf_token %}
-                    <button class="btn" type="submit">Удалить</button>
+                    <button class="btn btn--danger" type="submit">Удалить</button>
                 </form>
+                </div>
             </td>
         </tr>
         {% empty %}
         <tr>
-            <td colspan="7" class="muted">Счета еще не созданы.</td>
+            <td colspan="4" class="muted">Счета еще не созданы.</td>
         </tr>
         {% endfor %}
     </tbody>
 </table>
+</div>

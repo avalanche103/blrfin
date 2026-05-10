@@ -183,9 +183,10 @@ def prices_api(request):
             {
                 'from_currency': item.from_currency,
                 'to_currency': item.to_currency,
+                'effective_date': item.effective_date.isoformat(),
                 'rate': str(item.rate),
             }
-            for item in FXRate.objects.all().order_by('from_currency', 'to_currency')
+            for item in FXRate.objects.all().order_by('from_currency', 'to_currency', 'effective_date')
         ],
     }
     return JsonResponse(payload)

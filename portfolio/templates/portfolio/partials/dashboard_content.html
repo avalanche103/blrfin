@@ -47,25 +47,62 @@
 
     <section class="card card--span-12">
         <h2>Портфель</h2>
-        <div class="toolbar-status" style="margin-bottom: 1rem;">
-            <div>
-                <strong>Доходность портфеля по инструментам</strong>
-                <span>
-                    К {{ portfolio_performance.previous_month_end.date|date:'d.m.Y' }}:
+        <div class="section-meta">
+            <div class="performance-grid">
+                <div
+                    class="performance-stat"
                     {% if portfolio_performance.previous_month_end.return_pct is not None %}
-                        {{ portfolio_performance.previous_month_end.return_pct|floatformat:2 }}%
-                    {% else %}
-                        <span class="muted">Нет базы</span>
+                    title="Метод: Modified Dietz&#10;База расчета: {{ portfolio_performance.previous_month_end.weighted_capital_base|floatformat:2 }} {{ base_currency }}&#10;Переоценка: {{ portfolio_performance.previous_month_end.revaluation_return_pct|floatformat:2 }}% ({{ portfolio_performance.previous_month_end.revaluation_base_value|floatformat:2 }} {{ base_currency }})&#10;Выплаты / капитализация: {{ portfolio_performance.previous_month_end.income_return_pct|floatformat:2 }}% ({{ portfolio_performance.previous_month_end.income_component_base_value|floatformat:2 }} {{ base_currency }})"
                     {% endif %}
-                </span>
-                <span>
-                    К {{ portfolio_performance.previous_year_end.date|date:'d.m.Y' }}:
+                >
+                    <span class="label">Доходность к прошлому месяцу</span>
+                    <span class="meta meta--method">Modified Dietz</span>
+                    <span class="meta">Срез на {{ portfolio_performance.previous_month_end.date|date:'d.m.Y' }}</span>
+                    <span class="value mono">
+                        {% if portfolio_performance.previous_month_end.return_pct is not None %}
+                            {{ portfolio_performance.previous_month_end.return_pct|floatformat:2 }}%
+                        {% else %}
+                            <span class="muted">Нет базы</span>
+                        {% endif %}
+                    </span>
+                    <span class="meta">База: {{ portfolio_performance.previous_month_end.weighted_capital_base|floatformat:2 }} {{ base_currency }}</span>
+                </div>
+                <div
+                    class="performance-stat"
                     {% if portfolio_performance.previous_year_end.return_pct is not None %}
-                        {{ portfolio_performance.previous_year_end.return_pct|floatformat:2 }}%
-                    {% else %}
-                        <span class="muted">Нет базы</span>
+                    title="Метод: Modified Dietz&#10;База расчета: {{ portfolio_performance.previous_year_end.weighted_capital_base|floatformat:2 }} {{ base_currency }}&#10;Переоценка: {{ portfolio_performance.previous_year_end.revaluation_return_pct|floatformat:2 }}% ({{ portfolio_performance.previous_year_end.revaluation_base_value|floatformat:2 }} {{ base_currency }})&#10;Выплаты / капитализация: {{ portfolio_performance.previous_year_end.income_return_pct|floatformat:2 }}% ({{ portfolio_performance.previous_year_end.income_component_base_value|floatformat:2 }} {{ base_currency }})"
                     {% endif %}
-                </span>
+                >
+                    <span class="label">Доходность к прошлому году</span>
+                    <span class="meta meta--method">Modified Dietz</span>
+                    <span class="meta">Срез на {{ portfolio_performance.previous_year_end.date|date:'d.m.Y' }}</span>
+                    <span class="value mono">
+                        {% if portfolio_performance.previous_year_end.return_pct is not None %}
+                            {{ portfolio_performance.previous_year_end.return_pct|floatformat:2 }}%
+                        {% else %}
+                            <span class="muted">Нет базы</span>
+                        {% endif %}
+                    </span>
+                    <span class="meta">База: {{ portfolio_performance.previous_year_end.weighted_capital_base|floatformat:2 }} {{ base_currency }}</span>
+                </div>
+                <div
+                    class="performance-stat"
+                    {% if portfolio_performance.trailing_twelve_months.return_pct is not None %}
+                    title="Метод: Modified Dietz&#10;База расчета: {{ portfolio_performance.trailing_twelve_months.weighted_capital_base|floatformat:2 }} {{ base_currency }}&#10;Переоценка: {{ portfolio_performance.trailing_twelve_months.revaluation_return_pct|floatformat:2 }}% ({{ portfolio_performance.trailing_twelve_months.revaluation_base_value|floatformat:2 }} {{ base_currency }})&#10;Выплаты / капитализация: {{ portfolio_performance.trailing_twelve_months.income_return_pct|floatformat:2 }}% ({{ portfolio_performance.trailing_twelve_months.income_component_base_value|floatformat:2 }} {{ base_currency }})"
+                    {% endif %}
+                >
+                    <span class="label">Доходность за 12 месяцев</span>
+                    <span class="meta meta--method">Modified Dietz</span>
+                    <span class="meta">Срез на {{ portfolio_performance.trailing_twelve_months.date|date:'d.m.Y' }}</span>
+                    <span class="value mono">
+                        {% if portfolio_performance.trailing_twelve_months.return_pct is not None %}
+                            {{ portfolio_performance.trailing_twelve_months.return_pct|floatformat:2 }}%
+                        {% else %}
+                            <span class="muted">Нет базы</span>
+                        {% endif %}
+                    </span>
+                    <span class="meta">База: {{ portfolio_performance.trailing_twelve_months.weighted_capital_base|floatformat:2 }} {{ base_currency }}</span>
+                </div>
             </div>
         </div>
         {% include "portfolio/partials/portfolio_table.html" %}

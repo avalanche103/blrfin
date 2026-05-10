@@ -217,6 +217,45 @@ class DepositCapitalizationAdjustment(TimestampedModel):
         return f'{self.asset.symbol} {self.capitalization_date} {self.interest_amount}'
 
 
+class DepositInterestPayout(TimestampedModel):
+    asset = models.ForeignKey(Asset, on_delete=models.PROTECT, related_name='interest_payouts', verbose_name='Депозит')
+    cash_transaction = models.OneToOneField(
+        'Transaction',
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='deposit_interest_payout_record',
+        verbose_name='Денежная операция',
+    )
+    payout_date = models.DateField(verbose_name='Дата выплаты')
+    interest_amount = models.DecimalField(max_digits=18, decimal_places=2, verbose_name='Сумма процентов')
+    notes = models.TextField(blank=True, verbose_name='Комментарий')
+
+    class Meta:
+        ordering = ['payout_date', 'id']
+        verbose_name = 'выплата процентов по депозиту'
+        verbose_name_plural = 'выплаты процентов по депозитам'
+        constraints = [
+            models.UniqueConstraint(fields=['asset', 'payout_date'], name='unique_deposit_interest_payout'),
+        ]
+
+    def clean(self):
+        errors = {}
+        if self.asset and self.asset.asset_class != Asset.AssetClass.DEPOSIT:
+            errors['asset'] = 'История выплат доступна только для депозитов.'
+        if self.interest_amount is None or self.interest_amount < 0:
+            errors['interest_amount'] = 'Сумма процентов не может быть отрицательной.'
+        if self.asset and self.payout_date and self.asset.deposit_open_date and self.payout_date <= self.asset.deposit_open_date:
+            errors['payout_date'] = 'Дата выплаты должна быть позже даты открытия депозита.'
+        if self.asset and self.asset.closed_at and self.payout_date and self.payout_date > self.asset.closed_at:
+            errors['payout_date'] = 'Нельзя сохранить выплату после даты закрытия депозита.'
+        if errors:
+            raise ValidationError(errors)
+
+    def __str__(self):
+        return f'{self.asset.symbol} {self.payout_date} {self.interest_amount}'
+
+
 class DepositRateChange(TimestampedModel):
     asset = models.ForeignKey(Asset, on_delete=models.PROTECT, related_name='rate_changes', verbose_name='Депозит')
     effective_date = models.DateField(verbose_name='Дата начала действия')
@@ -251,7 +290,7 @@ class DepositRateChange(TimestampedModel):
 class FXRate(TimestampedModel):
     from_currency = models.CharField(max_length=3, verbose_name='Из валюты')
     to_currency = models.CharField(max_length=3, verbose_name='В валюту')
-    effective_date = models.DateField(null=True, blank=True, verbose_name='Дата курса')
+    effective_date = models.DateField(verbose_name='Дата курса')
     rate = models.DecimalField(max_digits=18, decimal_places=6, verbose_name='Курс')
 
     class Meta:
@@ -259,7 +298,7 @@ class FXRate(TimestampedModel):
         verbose_name = 'валютный курс'
         verbose_name_plural = 'валютные курсы'
         constraints = [
-            models.UniqueConstraint(fields=['from_currency', 'to_currency'], name='unique_fx_pair'),
+            models.UniqueConstraint(fields=['from_currency', 'to_currency', 'effective_date'], name='unique_fx_pair_on_date'),
         ]
 
     def clean(self):
