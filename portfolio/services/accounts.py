@@ -10,7 +10,7 @@ from django.db import transaction as db_transaction
 from portfolio.models import Account, Asset, DepositTopUp, Transaction
 
 from .portfolio import convert_amount
-from .transactions import ACCOUNT_TOPUP_NOTE, CLOSE_ASSET_NOTE, DEPOSIT_TOPUP_NOTE, SYSTEM_DEPOSIT_NOTE, build_deposit_capitalization_history, has_system_note
+from .transactions import ACCOUNT_TOPUP_NOTE, CLOSE_ASSET_NOTE, DEPOSIT_PAYOUT_NOTE, DEPOSIT_TOPUP_NOTE, SYSTEM_DEPOSIT_NOTE, build_deposit_capitalization_history, build_deposit_interest_payout_history, has_system_note
 
 
 SYSTEM_DEPOSIT_NOTE = '__system_deposit_position__'
@@ -115,6 +115,27 @@ def _deposit_capitalization_history_items():
     return items
 
 
+def _deposit_interest_payout_history_items():
+    items = []
+    deposits = Asset.objects.filter(asset_class=Asset.AssetClass.DEPOSIT).select_related('account')
+    for asset in deposits:
+        for row in build_deposit_interest_payout_history(asset):
+            if row.get('cash_transaction_id'):
+                continue
+            occurred_at = timezone.make_aware(datetime.combine(row['operation_date'], time.min), timezone.get_current_timezone())
+            items.append(
+                _as_operation_item(
+                    occurred_at=occurred_at,
+                    display_type='Выплата процентов по депозиту',
+                    asset=asset,
+                    destination_account=asset.account,
+                    amount=row['interest_amount'],
+                    currency=asset.price_currency or (asset.account.currency if asset.account else ''),
+                )
+            )
+    return items
+
+
 def list_transactions(limit=25):
     queryset = Transaction.objects.select_related('source_account', 'destination_account', 'asset')
     items = list(queryset)
@@ -125,6 +146,8 @@ def list_transactions(limit=25):
             item.display_type = 'Открытие продукта'
         elif has_system_note(item, DEPOSIT_TOPUP_NOTE):
             item.display_type = 'Пополнение депозита'
+        elif has_system_note(item, DEPOSIT_PAYOUT_NOTE):
+            item.display_type = 'Выплата процентов по депозиту'
         elif has_system_note(item, ACCOUNT_TOPUP_NOTE):
             item.display_type = 'Пополнение счета'
         else:
@@ -132,6 +155,7 @@ def list_transactions(limit=25):
 
     items.extend(_deposit_topup_history_items())
     items.extend(_deposit_capitalization_history_items())
+    items.extend(_deposit_interest_payout_history_items())
     items.sort(key=lambda item: item.occurred_at, reverse=True)
     return items[:limit] if limit else items
 

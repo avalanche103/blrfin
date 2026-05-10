@@ -224,6 +224,12 @@ def _asset_profitability_breakdown(asset, *, market_value, invested_base_value, 
     return profitability_base_value, revaluation_base_value, income_component_base_value
 
 
+def _convert_base_value_to_usd(value, *, base_currency, on_date=None):
+    if value is None:
+        return None
+    return convert_amount(value, base_currency, 'USD', on_date=on_date)
+
+
 def build_asset_positions(on_date=None):
     positions = defaultdict(lambda: Decimal('0'))
     transactions = Transaction.objects.filter(
@@ -447,6 +453,22 @@ def build_portfolio_performance(base_currency=None, *, end_date=None):
         end_date=end_date,
     )
 
+    month_breakdown['return_usd_value'] = _convert_base_value_to_usd(
+        month_breakdown['return_base_value'],
+        base_currency=base_currency,
+        on_date=end_date,
+    )
+    year_breakdown['return_usd_value'] = _convert_base_value_to_usd(
+        year_breakdown['return_base_value'],
+        base_currency=base_currency,
+        on_date=end_date,
+    )
+    trailing_twelve_month_breakdown['return_usd_value'] = _convert_base_value_to_usd(
+        trailing_twelve_month_breakdown['return_base_value'],
+        base_currency=base_currency,
+        on_date=end_date,
+    )
+
     return {
         'previous_month_end': {
             'date': previous_month_end,
@@ -525,6 +547,11 @@ def build_portfolio_snapshot(base_currency=None, account_rows=None):
             'native_value': native_value,
             'invested_base_value': invested_base_value,
             'profitability_base_value': profitability_base_value,
+            'profitability_usd_value': _convert_base_value_to_usd(
+                profitability_base_value,
+                base_currency=base_currency,
+                on_date=as_of_date,
+            ),
             'annualized_return_pct': annualized_return_pct,
             'revaluation_base_value': revaluation_base_value,
             'revaluation_return_pct': revaluation_return_pct,

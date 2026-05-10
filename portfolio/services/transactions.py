@@ -1,5 +1,5 @@
 from calendar import monthrange
-from datetime import datetime, time, timedelta
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 
 from django.core.exceptions import ValidationError
@@ -16,6 +16,19 @@ CLOSE_ASSET_NOTE = '__asset_close_payout__'
 DEPOSIT_TOPUP_NOTE = '__deposit_topup__'
 ACCOUNT_TOPUP_NOTE = '__account_topup__'
 DEPOSIT_PAYOUT_NOTE = '__deposit_interest_payout__'
+PAYOUT_CONFIRMATION_WINDOW_DAYS = 31
+
+BELARUS_FIXED_PUBLIC_HOLIDAYS = {
+    (1, 1),
+    (1, 2),
+    (1, 7),
+    (3, 8),
+    (5, 1),
+    (5, 9),
+    (7, 3),
+    (11, 7),
+    (12, 25),
+}
 
 
 def has_system_note(item_or_notes, marker):
@@ -81,6 +94,39 @@ def _semi_monthly_anchor_days(open_day):
     else:
         secondary_day = primary_day + 15
     return tuple(sorted({primary_day, secondary_day}))
+
+
+def _orthodox_easter_date(year):
+    a = year % 4
+    b = year % 7
+    c = year % 19
+    d = (19 * c + 15) % 30
+    e = (2 * a + 4 * b - d + 34) % 7
+    month = (d + e + 114) // 31
+    day = ((d + e + 114) % 31) + 1
+    julian_easter = date(year, month, day)
+    gregorian_offset = year // 100 - year // 400 - 2
+    return julian_easter + timedelta(days=gregorian_offset)
+
+
+def _belarus_public_holidays(year):
+    holidays = {date(year, month, day) for month, day in BELARUS_FIXED_PUBLIC_HOLIDAYS}
+    holidays.add(_orthodox_easter_date(year) + timedelta(days=9))
+    return holidays
+
+
+def _is_belarus_non_working_day(candidate):
+    return candidate.weekday() >= 5 or candidate in _belarus_public_holidays(candidate.year)
+
+
+def _roll_deposit_event_date(asset, candidate, effective_end):
+    if not asset.deposit_weekend_rollover:
+        return candidate
+
+    rolled_candidate = candidate
+    while _is_belarus_non_working_day(rolled_candidate) and rolled_candidate <= effective_end:
+        rolled_candidate += timedelta(days=1)
+    return rolled_candidate
 
 
 def _contribution_label(asset, contribution_date, amount):
@@ -206,6 +252,58 @@ def _capitalization_dates(asset, effective_end):
     return dates
 
 
+def _resolved_deposit_event_dates(asset, effective_end, explicit_dates=None):
+    resolved_dates = list(_capitalization_dates(asset, effective_end))
+    if not explicit_dates:
+        return resolved_dates
+
+    for explicit_date in sorted(set(explicit_dates)):
+        if explicit_date <= asset.deposit_open_date or explicit_date > effective_end:
+            continue
+        if explicit_date in resolved_dates:
+            continue
+
+        insert_index = 0
+        while insert_index < len(resolved_dates) and resolved_dates[insert_index] < explicit_date:
+            insert_index += 1
+
+        previous_index = insert_index - 1
+        next_date = resolved_dates[insert_index] if insert_index < len(resolved_dates) else None
+
+        if previous_index >= 0 and explicit_date > resolved_dates[previous_index] and (next_date is None or explicit_date < next_date):
+            resolved_dates[previous_index] = explicit_date
+        else:
+            resolved_dates.insert(insert_index, explicit_date)
+
+        resolved_dates = sorted(set(resolved_dates))
+
+    return resolved_dates
+
+
+def _deposit_event_date_map(asset, effective_end, explicit_dates=None):
+    event_date_map = {}
+    for scheduled_date in _resolved_deposit_event_dates(asset, effective_end, explicit_dates):
+        actual_date = scheduled_date
+        if explicit_dates and scheduled_date in explicit_dates:
+            actual_date = scheduled_date
+        else:
+            actual_date = _roll_deposit_event_date(asset, scheduled_date, effective_end)
+        event_date_map[actual_date] = scheduled_date
+    return event_date_map
+
+
+def _capitalization_overlap_days(operation_date, scheduled_date):
+    if not operation_date or not scheduled_date or operation_date <= scheduled_date:
+        return 0
+    return (operation_date - scheduled_date).days
+
+
+def _uses_actual_capitalization_period_start(asset):
+    account_name = (asset.account.name if asset.account else '') or ''
+    open_day = asset.deposit_open_date.day if asset.deposit_open_date else 0
+    return 'БЕЛВЭБ' in account_name.upper() and open_day >= 29
+
+
 def _simulate_deposit_capitalization(asset):
     principal = _quantize_money(asset.deposit_initial_amount or Decimal('0'))
     if principal <= 0 or not asset.deposit_open_date or not asset.deposit_annual_rate:
@@ -219,7 +317,8 @@ def _simulate_deposit_capitalization(asset):
     current_rate = asset.deposit_annual_rate
     topups_by_date = _deposit_topups_by_date(asset, effective_end)
     adjustments_by_date = _capitalization_adjustments_by_date(asset)
-    capitalization_dates = set(_capitalization_dates(asset, effective_end)) | set(adjustments_by_date)
+    capitalization_date_map = _deposit_event_date_map(asset, effective_end, adjustments_by_date)
+    capitalization_dates = set(capitalization_date_map)
     rate_changes_by_date = _rate_changes_by_date(asset, effective_end)
 
     history = []
@@ -232,14 +331,16 @@ def _simulate_deposit_capitalization(asset):
 
     while current_date <= effective_end:
         if current_date in capitalization_dates:
+            scheduled_date = capitalization_date_map.get(current_date, current_date)
             computed_interest_amount = _quantize_money(period_interest_total)
-            adjustment = adjustments_by_date.get(current_date)
+            adjustment = adjustments_by_date.get(current_date) or adjustments_by_date.get(scheduled_date)
             interest_amount = adjustment.interest_amount if adjustment else computed_interest_amount
             balance_before = _quantize_money(balance)
             balance_after = _quantize_money(balance_before + interest_amount)
+            operation_date = adjustment.capitalization_date if adjustment else current_date
             history.append(
                 {
-                    'capitalization_date': current_date,
+                    'capitalization_date': operation_date,
                     'period_start': current_period_start,
                     'opening_balance': _quantize_money(opening_balance),
                     'topups_amount': _quantize_money(period_topups),
@@ -254,11 +355,12 @@ def _simulate_deposit_capitalization(asset):
                 }
             )
             balance = balance_after
-            current_period_start = current_date
+            current_period_start = operation_date if _uses_actual_capitalization_period_start(asset) else scheduled_date
             opening_balance = balance
             period_topups = Decimal('0')
-            period_daily_balance_total = Decimal('0')
-            period_interest_total = Decimal('0')
+            overlap_days = Decimal('0') if _uses_actual_capitalization_period_start(asset) else _capitalization_overlap_days(operation_date, scheduled_date)
+            period_daily_balance_total = balance * overlap_days
+            period_interest_total = period_daily_balance_total * ((current_rate / Decimal('100')) / Decimal('365'))
 
         rate_change = rate_changes_by_date.get(current_date)
         if rate_change:
@@ -341,8 +443,16 @@ def _build_deposit_projected_schedule(asset, *, effective_end):
     payouts_by_date = _interest_payouts_by_date(asset, effective_end)
     rate_changes_by_date = _rate_changes_by_date(asset, effective_end)
     is_capitalization = asset.deposit_interest_payout_method == Asset.InterestPayoutMethod.CAPITALIZATION
-    event_dates = set(_capitalization_dates(asset, effective_end))
-    event_dates |= set(adjustments_by_date if is_capitalization else payouts_by_date)
+    explicit_dates = adjustments_by_date if is_capitalization else payouts_by_date
+    today = timezone.localdate()
+    event_date_map = {}
+    for scheduled_date in _resolved_deposit_event_dates(asset, effective_end, explicit_dates):
+        has_explicit_record = bool(explicit_dates and scheduled_date in explicit_dates)
+        trigger_date = scheduled_date
+        if not has_explicit_record and (is_capitalization or scheduled_date >= today):
+            trigger_date = _roll_deposit_event_date(asset, scheduled_date, effective_end)
+        event_date_map[trigger_date] = scheduled_date
+    event_dates = set(event_date_map)
 
     schedule = []
     current_period_start = asset.deposit_open_date
@@ -354,14 +464,17 @@ def _build_deposit_projected_schedule(asset, *, effective_end):
 
     while current_date <= effective_end:
         if current_date in event_dates:
+            scheduled_date = event_date_map.get(current_date, current_date)
             computed_interest_amount = _quantize_money(period_interest_total)
-            record = adjustments_by_date.get(current_date) if is_capitalization else payouts_by_date.get(current_date)
+            record_source = adjustments_by_date if is_capitalization else payouts_by_date
+            record = record_source.get(current_date) or record_source.get(scheduled_date)
             interest_amount = record.interest_amount if record else computed_interest_amount
             balance_before = _quantize_money(balance)
             balance_after = _quantize_money(balance_before + interest_amount) if is_capitalization else balance_before
+            operation_date = getattr(record, 'payout_date', None) or getattr(record, 'capitalization_date', None) or current_date
             schedule.append(
                 {
-                    'operation_date': current_date,
+                    'operation_date': operation_date,
                     'operation_type': 'capitalization' if is_capitalization else 'payout',
                     'period_start': current_period_start,
                     'opening_balance': _quantize_money(opening_balance),
@@ -380,11 +493,16 @@ def _build_deposit_projected_schedule(asset, *, effective_end):
                 }
             )
             balance = balance_after
-            current_period_start = current_date
+            current_period_start = operation_date if (is_capitalization and _uses_actual_capitalization_period_start(asset)) else scheduled_date
             opening_balance = balance
             period_topups = Decimal('0')
-            period_daily_balance_total = Decimal('0')
-            period_interest_total = Decimal('0')
+            if is_capitalization:
+                overlap_days = Decimal('0') if _uses_actual_capitalization_period_start(asset) else _capitalization_overlap_days(operation_date, scheduled_date)
+                period_daily_balance_total = balance * overlap_days
+                period_interest_total = period_daily_balance_total * ((current_rate / Decimal('100')) / Decimal('365'))
+            else:
+                period_daily_balance_total = Decimal('0')
+                period_interest_total = Decimal('0')
 
         rate_change = rate_changes_by_date.get(current_date)
         if rate_change:
@@ -450,6 +568,38 @@ def build_upcoming_operations(limit=12):
     return operations[:limit]
 
 
+def build_due_payout_confirmations(limit=12):
+    today = timezone.localdate()
+    window_start = today - timedelta(days=PAYOUT_CONFIRMATION_WINDOW_DAYS)
+    items = []
+
+    assets = Asset.objects.filter(
+        asset_class=Asset.AssetClass.DEPOSIT,
+        deposit_interest_payout_method=Asset.InterestPayoutMethod.TO_ACCOUNT,
+    ).select_related('account')
+
+    for asset in assets:
+        for row in build_deposit_interest_payout_history(asset):
+            if row['operation_date'] > today or row['operation_date'] < window_start or row['credits_account']:
+                continue
+            if row['is_adjusted'] and row['operation_date'] < today:
+                continue
+            items.append(
+                {
+                    'date': row['operation_date'],
+                    'asset': asset,
+                    'expected_amount': row['interest_amount'],
+                    'currency': asset.price_currency or asset.account.currency,
+                    'is_adjusted': row['is_adjusted'],
+                    'adjustment_notes': row['adjustment_notes'],
+                    'is_overdue': row['operation_date'] < today,
+                }
+            )
+
+    items.sort(key=lambda item: (item['date'], item['asset'].symbol), reverse=True)
+    return items[:limit]
+
+
 @db_transaction.atomic
 def upsert_capitalization_adjustment(asset, *, capitalization_date, interest_amount, notes=''):
     adjustment, _ = DepositCapitalizationAdjustment.objects.update_or_create(
@@ -474,7 +624,7 @@ def delete_capitalization_adjustment(adjustment):
 
 
 @db_transaction.atomic
-def upsert_deposit_interest_payout(asset, *, payout_date, interest_amount, notes='', credit_to_account=False, payout_record=None):
+def upsert_deposit_interest_payout(asset, *, payout_date, interest_amount, notes='', credit_to_account=False, payout_record=None, force_credit_to_account=False):
     payout_date = _normalize_date(payout_date)
     interest_amount = _normalize_decimal(interest_amount)
     if payout_record is None:
@@ -488,7 +638,9 @@ def upsert_deposit_interest_payout(asset, *, payout_date, interest_amount, notes
     payout_record.save()
 
     transaction = payout_record.cash_transaction
-    should_credit_account = bool(credit_to_account and payout_date and payout_date >= timezone.localdate())
+    should_credit_account = bool(
+        credit_to_account and payout_date and (payout_date >= timezone.localdate() or force_credit_to_account)
+    )
     if should_credit_account:
         transaction_payload = {
             'transaction_type': Transaction.TransactionType.DEPOSIT,

@@ -1,0 +1,18 @@
+{% extends "portfolio/base.html" %}
+
+{% block title %}Ближайшие операции{% endblock %}
+
+{% block content %}
+<div class="stack">
+    <section class="card card--span-12">
+        <div class="card-head">
+            <div>
+                <h2>{{ page_title }}</h2>
+                <p class="muted">{{ page_description }}</p>
+            </div>
+            <a class="btn btn--ghost" href="{{ back_url }}">{{ back_label }}</a>
+        </div>
+        {% include "portfolio/partials/upcoming_operations_table.html" %}
+    </section>
+</div>
+{% endblock %}

@@ -6,6 +6,8 @@ app_name = 'portfolio'
 
 urlpatterns = [
     path('', views.dashboard, name='dashboard'),
+    path('upcoming-operations/', views.upcoming_operations_page_view, name='upcoming-operations-page'),
+    path('transaction-history/', views.transaction_history_page_view, name='transaction-history-page'),
     path('actions/accounts/new/', views.account_form_view, name='account-form'),
     path('actions/accounts/<int:account_id>/edit/', views.account_edit_form_view, name='account-edit-form'),
     path('actions/accounts/topup/', views.account_topup_form_view, name='account-topup-form'),
@@ -37,6 +39,7 @@ urlpatterns = [
     path('assets/<int:asset_id>/close/', views.close_asset_view, name='asset-close'),
     path('assets/<int:asset_id>/capitalizations/<str:capitalization_date>/update/', views.update_capitalization_adjustment_view, name='capitalization-adjustment-update'),
     path('assets/<int:asset_id>/payouts/<str:payout_date>/update/', views.update_deposit_interest_payout_view, name='deposit-interest-payout-update'),
+    path('assets/<int:asset_id>/payouts/<str:payout_date>/confirm/', views.confirm_deposit_interest_payout_view, name='deposit-interest-payout-confirm'),
     path('assets/<int:asset_id>/rates/create/', views.create_deposit_rate_change_view, name='deposit-rate-change-create'),
     path('assets/<int:asset_id>/topup/', views.create_deposit_topup_view, name='deposit-topup-create'),
     path('capitalizations/<int:adjustment_id>/delete/', views.delete_capitalization_adjustment_view, name='capitalization-adjustment-delete'),

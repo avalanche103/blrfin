@@ -35,8 +35,15 @@
             </td>
             <td class="mono">
                 {% if row.annualized_return_pct is not None %}
-                    <span title="Переоценка: {{ row.revaluation_return_pct|floatformat:2 }}% ({{ row.revaluation_base_value|floatformat:2 }} {{ base_currency }})&#10;Выплаты / капитализация: {{ row.income_return_pct|floatformat:2 }}% ({{ row.income_component_base_value|floatformat:2 }} {{ base_currency }})">
-                        {{ row.annualized_return_pct|floatformat:2 }}%
+                    <span class="metric-inline" title="Переоценка: {{ row.revaluation_return_pct|floatformat:2 }}% ({{ row.revaluation_base_value|floatformat:2 }} {{ base_currency }})&#10;Выплаты / капитализация: {{ row.income_return_pct|floatformat:2 }}% ({{ row.income_component_base_value|floatformat:2 }} {{ base_currency }})">
+                        <span class="{% if row.annualized_return_pct > 0 %}value-positive{% elif row.annualized_return_pct < 0 %}value-negative{% else %}value-neutral{% endif %}">
+                            {{ row.annualized_return_pct|floatformat:2 }}%
+                        </span>
+                        {% if row.profitability_usd_value is not None %}
+                        <span class="value-delta {% if row.profitability_usd_value > 0 %}value-positive{% elif row.profitability_usd_value < 0 %}value-negative{% else %}value-neutral{% endif %}">
+                            {{ row.profitability_usd_value|floatformat:2 }} USD
+                        </span>
+                        {% endif %}
                     </span>
                 {% else %}
                     <span class="muted">Нет базы</span>

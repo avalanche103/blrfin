@@ -58,9 +58,16 @@
                     <span class="label">Доходность к прошлому месяцу</span>
                     <span class="meta meta--method">Modified Dietz</span>
                     <span class="meta">Срез на {{ portfolio_performance.previous_month_end.date|date:'d.m.Y' }}</span>
-                    <span class="value mono">
+                    <span class="value value-line mono">
                         {% if portfolio_performance.previous_month_end.return_pct is not None %}
-                            {{ portfolio_performance.previous_month_end.return_pct|floatformat:2 }}%
+                            <span class="{% if portfolio_performance.previous_month_end.return_pct > 0 %}value-positive{% elif portfolio_performance.previous_month_end.return_pct < 0 %}value-negative{% else %}value-neutral{% endif %}">
+                                {{ portfolio_performance.previous_month_end.return_pct|floatformat:2 }}%
+                            </span>
+                            {% if portfolio_performance.previous_month_end.return_usd_value is not None %}
+                            <span class="value-delta {% if portfolio_performance.previous_month_end.return_usd_value > 0 %}value-positive{% elif portfolio_performance.previous_month_end.return_usd_value < 0 %}value-negative{% else %}value-neutral{% endif %}">
+                                {{ portfolio_performance.previous_month_end.return_usd_value|floatformat:2 }} USD
+                            </span>
+                            {% endif %}
                         {% else %}
                             <span class="muted">Нет базы</span>
                         {% endif %}
@@ -76,9 +83,16 @@
                     <span class="label">Доходность к прошлому году</span>
                     <span class="meta meta--method">Modified Dietz</span>
                     <span class="meta">Срез на {{ portfolio_performance.previous_year_end.date|date:'d.m.Y' }}</span>
-                    <span class="value mono">
+                    <span class="value value-line mono">
                         {% if portfolio_performance.previous_year_end.return_pct is not None %}
-                            {{ portfolio_performance.previous_year_end.return_pct|floatformat:2 }}%
+                            <span class="{% if portfolio_performance.previous_year_end.return_pct > 0 %}value-positive{% elif portfolio_performance.previous_year_end.return_pct < 0 %}value-negative{% else %}value-neutral{% endif %}">
+                                {{ portfolio_performance.previous_year_end.return_pct|floatformat:2 }}%
+                            </span>
+                            {% if portfolio_performance.previous_year_end.return_usd_value is not None %}
+                            <span class="value-delta {% if portfolio_performance.previous_year_end.return_usd_value > 0 %}value-positive{% elif portfolio_performance.previous_year_end.return_usd_value < 0 %}value-negative{% else %}value-neutral{% endif %}">
+                                {{ portfolio_performance.previous_year_end.return_usd_value|floatformat:2 }} USD
+                            </span>
+                            {% endif %}
                         {% else %}
                             <span class="muted">Нет базы</span>
                         {% endif %}
@@ -94,9 +108,16 @@
                     <span class="label">Доходность за 12 месяцев</span>
                     <span class="meta meta--method">Modified Dietz</span>
                     <span class="meta">Срез на {{ portfolio_performance.trailing_twelve_months.date|date:'d.m.Y' }}</span>
-                    <span class="value mono">
+                    <span class="value value-line mono">
                         {% if portfolio_performance.trailing_twelve_months.return_pct is not None %}
-                            {{ portfolio_performance.trailing_twelve_months.return_pct|floatformat:2 }}%
+                            <span class="{% if portfolio_performance.trailing_twelve_months.return_pct > 0 %}value-positive{% elif portfolio_performance.trailing_twelve_months.return_pct < 0 %}value-negative{% else %}value-neutral{% endif %}">
+                                {{ portfolio_performance.trailing_twelve_months.return_pct|floatformat:2 }}%
+                            </span>
+                            {% if portfolio_performance.trailing_twelve_months.return_usd_value is not None %}
+                            <span class="value-delta {% if portfolio_performance.trailing_twelve_months.return_usd_value > 0 %}value-positive{% elif portfolio_performance.trailing_twelve_months.return_usd_value < 0 %}value-negative{% else %}value-neutral{% endif %}">
+                                {{ portfolio_performance.trailing_twelve_months.return_usd_value|floatformat:2 }} USD
+                            </span>
+                            {% endif %}
                         {% else %}
                             <span class="muted">Нет базы</span>
                         {% endif %}
@@ -106,6 +127,14 @@
             </div>
         </div>
         {% include "portfolio/partials/portfolio_table.html" %}
+    </section>
+
+    <section class="card card--span-12">
+        <div class="card-head">
+            <h2>Выплаты</h2>
+            <span class="muted">К подтверждению: {{ due_payouts|length }}</span>
+        </div>
+        {% include "portfolio/partials/due_payouts_table.html" %}
     </section>
 
     <section class="card card--span-4">
@@ -119,12 +148,18 @@
     </section>
 
     <section class="card card--span-6">
-        <h2>Ближайшие операции</h2>
+        <div class="card-head">
+            <h2>Ближайшие операции</h2>
+            <a class="btn btn--ghost" href="{% url 'portfolio:upcoming-operations-page' %}">Развернуть</a>
+        </div>
         {% include "portfolio/partials/upcoming_operations_table.html" %}
     </section>
 
     <section class="card card--span-6">
-        <h2>История операций</h2>
+        <div class="card-head">
+            <h2>История операций</h2>
+            <a class="btn btn--ghost" href="{% url 'portfolio:transaction-history-page' %}">Развернуть</a>
+        </div>
         {% include "portfolio/partials/transactions_table.html" %}
     </section>
 

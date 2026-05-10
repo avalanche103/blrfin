@@ -8,11 +8,12 @@ from django.utils.dateparse import parse_date
 from django.views.decorators.http import require_GET, require_POST
 
 from .forms import AccountForm, AccountTopUpForm, AssetCloseForm, AssetForm, CSVImportForm, DepositAssetForm, DepositCapitalizationAdjustmentForm, DepositInterestPayoutForm, DepositRateChangeForm, DepositTopUpForm, FXRateForm, TransactionForm, TransferForm
+from .services.accounts import list_transactions
 from .services.accounts import delete_account
 from .services.dashboard import build_dashboard_context
 from .services.imports import import_transactions_from_csv
 from .services.rates import auto_sync_nbrb_rates_if_stale, sync_nbrb_rates
-from .services.transactions import ACCOUNT_TOPUP_NOTE, add_deposit_topup, build_deposit_capitalization_history, build_deposit_interest_payout_history, close_asset, create_asset, create_transfer, create_transaction, delete_asset, delete_capitalization_adjustment, delete_deposit_interest_payout, delete_deposit_rate_change, delete_deposit_topup, get_current_asset_price, get_deposit_effective_rate, update_deposit_topup, update_asset, upsert_capitalization_adjustment, upsert_deposit_interest_payout, upsert_deposit_rate_change, upsert_fx_rate
+from .services.transactions import ACCOUNT_TOPUP_NOTE, add_deposit_topup, build_deposit_capitalization_history, build_deposit_interest_payout_history, build_upcoming_operations, close_asset, create_asset, create_transfer, create_transaction, delete_asset, delete_capitalization_adjustment, delete_deposit_interest_payout, delete_deposit_rate_change, delete_deposit_topup, get_current_asset_price, get_deposit_effective_rate, update_deposit_topup, update_asset, upsert_capitalization_adjustment, upsert_deposit_interest_payout, upsert_deposit_rate_change, upsert_fx_rate
 
 
 def _is_htmx(request: HttpRequest) -> bool:
@@ -127,6 +128,32 @@ def _deposit_rate_change_description() -> str:
 @require_GET
 def dashboard(request: HttpRequest) -> HttpResponse:
     return _render_dashboard(request)
+
+
+@require_GET
+def upcoming_operations_page_view(request: HttpRequest) -> HttpResponse:
+    auto_sync_nbrb_rates_if_stale()
+    context = {
+        'page_title': 'Ближайшие операции',
+        'page_description': 'Полный список планируемых выплат, капитализаций и закрытий продуктов.',
+        'back_url': reverse('portfolio:dashboard'),
+        'back_label': 'На дашборд',
+        'upcoming_operations': build_upcoming_operations(limit=None),
+    }
+    return render(request, 'portfolio/upcoming_operations_page.html', context)
+
+
+@require_GET
+def transaction_history_page_view(request: HttpRequest) -> HttpResponse:
+    auto_sync_nbrb_rates_if_stale()
+    context = {
+        'page_title': 'История операций',
+        'page_description': 'Полный журнал операций по счетам, депозитам и выплатам процентов.',
+        'back_url': reverse('portfolio:dashboard'),
+        'back_label': 'На дашборд',
+        'transactions': list_transactions(limit=None),
+    }
+    return render(request, 'portfolio/transaction_history_page.html', context)
 
 
 @require_GET
@@ -699,6 +726,40 @@ def update_deposit_interest_payout_view(request: HttpRequest, asset_id: int, pay
             status=400,
         )
     return _render_dashboard(request, status=400)
+
+
+@require_POST
+def confirm_deposit_interest_payout_view(request: HttpRequest, asset_id: int, payout_date: str) -> HttpResponse:
+    asset = get_object_or_404(AssetForm._meta.model, pk=asset_id)
+    parsed_date = parse_date(payout_date)
+    if not parsed_date:
+        messages.error(request, 'Не удалось определить дату выплаты.')
+        return redirect('portfolio:dashboard') if not _is_htmx(request) else _render_htmx_success(request)
+
+    if parsed_date > timezone.localdate():
+        messages.error(request, 'Подтверждать можно только выплату, дата которой уже наступила.')
+        return redirect('portfolio:dashboard') if not _is_htmx(request) else _render_htmx_success(request)
+
+    payout_record = DepositInterestPayoutForm._meta.model.objects.filter(asset=asset, payout_date=parsed_date).first()
+    row = next((item for item in build_deposit_interest_payout_history(asset) if item['operation_date'] == parsed_date), None)
+    if not row:
+        messages.error(request, f'Для депозита {asset.symbol} не найдена ожидаемая выплата на эту дату.')
+        return redirect('portfolio:dashboard') if not _is_htmx(request) else _render_htmx_success(request)
+
+    upsert_deposit_interest_payout(
+        asset,
+        payout_date=parsed_date,
+        interest_amount=payout_record.interest_amount if payout_record else row['interest_amount'],
+        notes=payout_record.notes if payout_record else '',
+        credit_to_account=parsed_date >= timezone.localdate(),
+        payout_record=payout_record,
+        force_credit_to_account=False,
+    )
+    if parsed_date >= timezone.localdate():
+        messages.success(request, f'Выплата по депозиту {asset.symbol} зачислена на счет.')
+    else:
+        messages.success(request, f'Выплата по депозиту {asset.symbol} отмечена как полученная без изменения остатка счета.')
+    return redirect('portfolio:dashboard') if not _is_htmx(request) else _render_htmx_success(request)
 
 
 @require_POST
