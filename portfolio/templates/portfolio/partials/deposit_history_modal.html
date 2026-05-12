@@ -243,8 +243,8 @@
                         <td>
                             {% if item.credits_account %}
                             <span>Зачислено на счет</span>
-                            {% elif item.is_adjusted %}
-                            <span>Только история</span>
+                            {% elif item.operation_date < today %}
+                            <span>Выплачено</span>
                             {% else %}
                             <span class="muted">Ожидается</span>
                             {% endif %}

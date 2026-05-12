@@ -37,6 +37,15 @@
                 >
                     Пополнить
                 </button>
+                <button
+                    class="btn btn--ghost"
+                    hx-get="{% url 'portfolio:account-transfer-form' row.account.id %}"
+                    hx-target="#modal-root"
+                    hx-swap="innerHTML"
+                    type="button"
+                >
+                    Перевод
+                </button>
                 <form hx-post="{% url 'portfolio:account-delete' row.account.id %}" hx-target="#dashboard-content" hx-swap="innerHTML" hx-confirm="Удалить счет {{ row.account.name }}?" style="display:inline-block; margin-left:8px;">
                     {% csrf_token %}
                     <button class="btn btn--danger" type="submit">Удалить</button>

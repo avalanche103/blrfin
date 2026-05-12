@@ -10,7 +10,7 @@ from django.db import transaction as db_transaction
 from portfolio.models import Account, Asset, DepositTopUp, Transaction
 
 from .portfolio import convert_amount
-from .transactions import ACCOUNT_TOPUP_NOTE, CLOSE_ASSET_NOTE, DEPOSIT_PAYOUT_NOTE, DEPOSIT_TOPUP_NOTE, SYSTEM_DEPOSIT_NOTE, build_deposit_capitalization_history, build_deposit_interest_payout_history, has_system_note
+from .transactions import ACCOUNT_TOPUP_NOTE, CLOSE_ASSET_NOTE, DEPOSIT_PAYOUT_NOTE, DEPOSIT_TOPUP_NOTE, SYSTEM_DEPOSIT_NOTE, build_deposit_capitalization_history, build_recorded_deposit_interest_payout_history, has_system_note
 
 
 SYSTEM_DEPOSIT_NOTE = '__system_deposit_position__'
@@ -119,7 +119,7 @@ def _deposit_interest_payout_history_items():
     items = []
     deposits = Asset.objects.filter(asset_class=Asset.AssetClass.DEPOSIT).select_related('account')
     for asset in deposits:
-        for row in build_deposit_interest_payout_history(asset):
+        for row in build_recorded_deposit_interest_payout_history(asset):
             if row.get('cash_transaction_id'):
                 continue
             occurred_at = timezone.make_aware(datetime.combine(row['operation_date'], time.min), timezone.get_current_timezone())

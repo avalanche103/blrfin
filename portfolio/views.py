@@ -13,7 +13,7 @@ from .services.accounts import delete_account
 from .services.dashboard import build_dashboard_context
 from .services.imports import import_transactions_from_csv
 from .services.rates import auto_sync_nbrb_rates_if_stale, sync_nbrb_rates
-from .services.transactions import ACCOUNT_TOPUP_NOTE, add_deposit_topup, build_deposit_capitalization_history, build_deposit_interest_payout_history, build_upcoming_operations, close_asset, create_asset, create_transfer, create_transaction, delete_asset, delete_capitalization_adjustment, delete_deposit_interest_payout, delete_deposit_rate_change, delete_deposit_topup, get_current_asset_price, get_deposit_effective_rate, update_deposit_topup, update_asset, upsert_capitalization_adjustment, upsert_deposit_interest_payout, upsert_deposit_rate_change, upsert_fx_rate
+from .services.transactions import ACCOUNT_TOPUP_NOTE, add_deposit_topup, build_deposit_capitalization_history, build_deposit_interest_payout_history, build_recorded_deposit_interest_payout_history, build_upcoming_operations, close_asset, create_asset, create_transfer, create_transaction, delete_asset, delete_capitalization_adjustment, delete_deposit_interest_payout, delete_deposit_rate_change, delete_deposit_topup, get_current_asset_price, get_deposit_effective_rate, synchronize_deposit_interest_payouts, update_deposit_topup, update_asset, upsert_capitalization_adjustment, upsert_deposit_interest_payout, upsert_deposit_rate_change, upsert_fx_rate
 
 
 def _is_htmx(request: HttpRequest) -> bool:
@@ -22,6 +22,7 @@ def _is_htmx(request: HttpRequest) -> bool:
 
 def _build_dashboard_context_with_auto_rates(forms=None):
     auto_sync_nbrb_rates_if_stale()
+    synchronize_deposit_interest_payouts()
     return build_dashboard_context(forms)
 
 
@@ -118,7 +119,7 @@ def _capitalization_adjustment_description() -> str:
 
 
 def _deposit_payout_description() -> str:
-    return 'Сохраните фактическую выплату процентов. Для прошлых дат запись останется в истории депозита и не изменит остаток счета.'
+    return 'Сохраните фактическую выплату процентов. До 10.10.2025 запись остается только в истории депозита. Начиная с 10.10.2025 система автоматически зачисляет выплату на счет в дату выплаты.'
 
 
 def _deposit_rate_change_description() -> str:
@@ -146,6 +147,7 @@ def upcoming_operations_page_view(request: HttpRequest) -> HttpResponse:
 @require_GET
 def transaction_history_page_view(request: HttpRequest) -> HttpResponse:
     auto_sync_nbrb_rates_if_stale()
+    synchronize_deposit_interest_payouts()
     context = {
         'page_title': 'История операций',
         'page_description': 'Полный журнал операций по счетам, депозитам и выплатам процентов.',
@@ -270,12 +272,13 @@ def deposit_history_view(request: HttpRequest, asset_id: int) -> HttpResponse:
     context = {
         'title': f'История депозита {asset.symbol}',
         'description': _deposit_history_description(),
+        'today': timezone.localdate(),
         'asset': asset,
         'topups': asset.topups.select_related('source_account').all(),
         'current_annual_rate': get_deposit_effective_rate(asset),
         'rate_changes': asset.rate_changes.all(),
         'capitalization_history': build_deposit_capitalization_history(asset),
-        'interest_payout_history': build_deposit_interest_payout_history(asset),
+        'interest_payout_history': build_recorded_deposit_interest_payout_history(asset),
     }
     return render(request, 'portfolio/partials/deposit_history_modal.html', context)
 
@@ -393,14 +396,15 @@ def transaction_form_view(request: HttpRequest) -> HttpResponse:
 
 
 @require_GET
-def transfer_form_view(request: HttpRequest) -> HttpResponse:
+def transfer_form_view(request: HttpRequest, account_id: int | None = None) -> HttpResponse:
+    account = get_object_or_404(AccountForm._meta.model, pk=account_id) if account_id else None
     return _render_modal(
         request,
         title='Добавить перевод',
-        form=TransferForm(),
+        form=TransferForm(account=account),
         action_url=reverse('portfolio:transfer-create'),
         submit_label='Сохранить перевод',
-        description='Можно перевести деньги или актив между счетами. Для актива выберите сам актив и количество.',
+        description='Выберите счет, с которого переводят деньги или актив, счет назначения и при необходимости комиссию. Для актива выберите сам актив и количество.',
     )
 
 
@@ -726,40 +730,6 @@ def update_deposit_interest_payout_view(request: HttpRequest, asset_id: int, pay
             status=400,
         )
     return _render_dashboard(request, status=400)
-
-
-@require_POST
-def confirm_deposit_interest_payout_view(request: HttpRequest, asset_id: int, payout_date: str) -> HttpResponse:
-    asset = get_object_or_404(AssetForm._meta.model, pk=asset_id)
-    parsed_date = parse_date(payout_date)
-    if not parsed_date:
-        messages.error(request, 'Не удалось определить дату выплаты.')
-        return redirect('portfolio:dashboard') if not _is_htmx(request) else _render_htmx_success(request)
-
-    if parsed_date > timezone.localdate():
-        messages.error(request, 'Подтверждать можно только выплату, дата которой уже наступила.')
-        return redirect('portfolio:dashboard') if not _is_htmx(request) else _render_htmx_success(request)
-
-    payout_record = DepositInterestPayoutForm._meta.model.objects.filter(asset=asset, payout_date=parsed_date).first()
-    row = next((item for item in build_deposit_interest_payout_history(asset) if item['operation_date'] == parsed_date), None)
-    if not row:
-        messages.error(request, f'Для депозита {asset.symbol} не найдена ожидаемая выплата на эту дату.')
-        return redirect('portfolio:dashboard') if not _is_htmx(request) else _render_htmx_success(request)
-
-    upsert_deposit_interest_payout(
-        asset,
-        payout_date=parsed_date,
-        interest_amount=payout_record.interest_amount if payout_record else row['interest_amount'],
-        notes=payout_record.notes if payout_record else '',
-        credit_to_account=parsed_date >= timezone.localdate(),
-        payout_record=payout_record,
-        force_credit_to_account=False,
-    )
-    if parsed_date >= timezone.localdate():
-        messages.success(request, f'Выплата по депозиту {asset.symbol} зачислена на счет.')
-    else:
-        messages.success(request, f'Выплата по депозиту {asset.symbol} отмечена как полученная без изменения остатка счета.')
-    return redirect('portfolio:dashboard') if not _is_htmx(request) else _render_htmx_success(request)
 
 
 @require_POST

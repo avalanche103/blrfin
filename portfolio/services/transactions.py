@@ -16,7 +16,8 @@ CLOSE_ASSET_NOTE = '__asset_close_payout__'
 DEPOSIT_TOPUP_NOTE = '__deposit_topup__'
 ACCOUNT_TOPUP_NOTE = '__account_topup__'
 DEPOSIT_PAYOUT_NOTE = '__deposit_interest_payout__'
-PAYOUT_CONFIRMATION_WINDOW_DAYS = 31
+DEPOSIT_ACCOUNT_CREDIT_START_DATE = date(2025, 10, 10)
+DEPOSIT_PAYOUT_AUTO_POST_LOOKBACK_DAYS = 1
 
 BELARUS_FIXED_PUBLIC_HOLIDAYS = {
     (1, 1),
@@ -52,6 +53,30 @@ def _normalize_decimal(value):
     if value in (None, '') or isinstance(value, Decimal):
         return value
     return Decimal(str(value))
+
+
+def deposit_payout_affects_account_balance(payout_date):
+    payout_date = _normalize_date(payout_date)
+    return bool(payout_date and payout_date >= DEPOSIT_ACCOUNT_CREDIT_START_DATE)
+
+
+def should_credit_deposit_payout_now(payout_date, *, as_of_date=None):
+    payout_date = _normalize_date(payout_date)
+    as_of_date = as_of_date or timezone.localdate()
+    return bool(
+        payout_date
+        and deposit_payout_affects_account_balance(payout_date)
+        and payout_date <= as_of_date
+    )
+
+
+def is_deposit_payout_in_auto_post_window(payout_date, *, as_of_date=None):
+    payout_date = _normalize_date(payout_date)
+    as_of_date = as_of_date or timezone.localdate()
+    if not payout_date:
+        return False
+    window_start = as_of_date - timedelta(days=DEPOSIT_PAYOUT_AUTO_POST_LOOKBACK_DAYS)
+    return window_start <= payout_date <= as_of_date
 
 
 def _deposit_effective_end_date(asset):
@@ -422,6 +447,15 @@ def build_deposit_interest_payout_history(asset):
     return history
 
 
+def build_recorded_deposit_interest_payout_history(asset):
+    today = timezone.localdate()
+    history = []
+    for row in build_deposit_interest_payout_history(asset):
+        if row['credits_account'] or row['operation_date'] < today:
+            history.append(row)
+    return history
+
+
 def _build_deposit_projected_schedule(asset, *, effective_end):
     principal = _quantize_money(asset.deposit_initial_amount or Decimal('0'))
     if principal <= 0 or not asset.deposit_open_date or not asset.deposit_annual_rate:
@@ -449,7 +483,7 @@ def _build_deposit_projected_schedule(asset, *, effective_end):
     for scheduled_date in _resolved_deposit_event_dates(asset, effective_end, explicit_dates):
         has_explicit_record = bool(explicit_dates and scheduled_date in explicit_dates)
         trigger_date = scheduled_date
-        if not has_explicit_record and (is_capitalization or scheduled_date >= today):
+        if not has_explicit_record:
             trigger_date = _roll_deposit_event_date(asset, scheduled_date, effective_end)
         event_date_map[trigger_date] = scheduled_date
     event_dates = set(event_date_map)
@@ -568,11 +602,9 @@ def build_upcoming_operations(limit=12):
     return operations[:limit]
 
 
-def build_due_payout_confirmations(limit=12):
-    today = timezone.localdate()
-    window_start = today - timedelta(days=PAYOUT_CONFIRMATION_WINDOW_DAYS)
-    items = []
-
+@db_transaction.atomic
+def synchronize_deposit_interest_payouts(*, as_of_date=None):
+    as_of_date = as_of_date or timezone.localdate()
     assets = Asset.objects.filter(
         asset_class=Asset.AssetClass.DEPOSIT,
         deposit_interest_payout_method=Asset.InterestPayoutMethod.TO_ACCOUNT,
@@ -580,24 +612,34 @@ def build_due_payout_confirmations(limit=12):
 
     for asset in assets:
         for row in build_deposit_interest_payout_history(asset):
-            if row['operation_date'] > today or row['operation_date'] < window_start or row['credits_account']:
+            payout_date = row['operation_date']
+            if not payout_date:
                 continue
-            if row['is_adjusted'] and row['operation_date'] < today:
-                continue
-            items.append(
-                {
-                    'date': row['operation_date'],
-                    'asset': asset,
-                    'expected_amount': row['interest_amount'],
-                    'currency': asset.price_currency or asset.account.currency,
-                    'is_adjusted': row['is_adjusted'],
-                    'adjustment_notes': row['adjustment_notes'],
-                    'is_overdue': row['operation_date'] < today,
-                }
-            )
 
-    items.sort(key=lambda item: (item['date'], item['asset'].symbol), reverse=True)
-    return items[:limit]
+            payout_record = DepositInterestPayout.objects.filter(asset=asset, payout_date=payout_date).first()
+            should_credit_account = should_credit_deposit_payout_now(payout_date, as_of_date=as_of_date)
+            is_in_auto_post_window = is_deposit_payout_in_auto_post_window(payout_date, as_of_date=as_of_date)
+
+            if payout_date > as_of_date and not payout_record:
+                continue
+
+            if payout_record is None and not (should_credit_account and is_in_auto_post_window):
+                continue
+
+            if payout_record is not None and not payout_record.cash_transaction_id and not is_in_auto_post_window:
+                continue
+
+            if payout_record is not None and bool(payout_record.cash_transaction_id) == should_credit_account:
+                continue
+
+            upsert_deposit_interest_payout(
+                asset,
+                payout_date=payout_date,
+                interest_amount=payout_record.interest_amount if payout_record else row['interest_amount'],
+                notes=payout_record.notes if payout_record else row['adjustment_notes'],
+                credit_to_account=should_credit_account,
+                payout_record=payout_record,
+            )
 
 
 @db_transaction.atomic
@@ -639,7 +681,10 @@ def upsert_deposit_interest_payout(asset, *, payout_date, interest_amount, notes
 
     transaction = payout_record.cash_transaction
     should_credit_account = bool(
-        credit_to_account and payout_date and (payout_date >= timezone.localdate() or force_credit_to_account)
+        payout_date and (
+            force_credit_to_account
+            or (credit_to_account and should_credit_deposit_payout_now(payout_date))
+        )
     )
     if should_credit_account:
         transaction_payload = {

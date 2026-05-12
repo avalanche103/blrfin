@@ -5,7 +5,7 @@ from portfolio.forms import AccountForm, AssetForm, CSVImportForm, FXRateForm, T
 from .accounts import build_account_rows, list_transactions, list_transfers
 from .portfolio import build_portfolio_snapshot
 from .rates import get_base_currency_rate_to_byn, get_latest_rate_date
-from .transactions import build_due_payout_confirmations, build_upcoming_operations
+from .transactions import build_upcoming_operations
 
 
 DASHBOARD_TABLE_LIMIT = 20
@@ -35,7 +35,6 @@ def build_dashboard_context(forms=None):
         'account_rows': account_rows,
         'transactions': list_transactions(limit=DASHBOARD_TABLE_LIMIT),
         'transfers': list_transfers(),
-        'due_payouts': build_due_payout_confirmations(limit=DASHBOARD_TABLE_LIMIT),
         'upcoming_operations': build_upcoming_operations(limit=DASHBOARD_TABLE_LIMIT),
         'portfolio_rows': portfolio_snapshot['rows'],
         'portfolio_summary': portfolio_snapshot['summary'],

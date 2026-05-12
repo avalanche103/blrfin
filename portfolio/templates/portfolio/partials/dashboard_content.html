@@ -26,6 +26,9 @@
     <button class="action-button action-button--toolbar" hx-get="{% url 'portfolio:account-topup-form' %}" hx-target="#modal-root" hx-swap="innerHTML" type="button">
         <strong>Пополнить счет</strong>
     </button>
+    <button class="action-button action-button--toolbar" hx-get="{% url 'portfolio:transfer-form' %}" hx-target="#modal-root" hx-swap="innerHTML" type="button">
+        <strong>Перевод между счетами</strong>
+    </button>
     <button class="action-button action-button--toolbar" hx-get="{% url 'portfolio:deposit-form' %}" hx-target="#modal-root" hx-swap="innerHTML" type="button">
         <strong>Добавить депозит</strong>
     </button>
@@ -127,14 +130,6 @@
             </div>
         </div>
         {% include "portfolio/partials/portfolio_table.html" %}
-    </section>
-
-    <section class="card card--span-12">
-        <div class="card-head">
-            <h2>Выплаты</h2>
-            <span class="muted">К подтверждению: {{ due_payouts|length }}</span>
-        </div>
-        {% include "portfolio/partials/due_payouts_table.html" %}
     </section>
 
     <section class="card card--span-4">

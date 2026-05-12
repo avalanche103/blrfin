@@ -2,6 +2,7 @@ from django import forms
 from django.utils import timezone
 
 from .models import Account, Asset, DepositCapitalizationAdjustment, DepositInterestPayout, DepositRateChange, DepositTopUp, FXRate, Transaction
+from .services.transactions import deposit_payout_affects_account_balance
 
 
 class StyledModelForm(forms.ModelForm):
@@ -159,7 +160,7 @@ class DepositInterestPayoutForm(forms.ModelForm):
         label='Зачислять выплату на счет',
         required=False,
         initial=True,
-        help_text='Для прошлых дат запись сохраняется только в истории депозита и не меняет остаток счета.',
+        help_text='До 10.10.2025 выплата сохраняется только в истории. Начиная с 10.10.2025 зачисление на счет выполняется автоматически в дату выплаты.',
     )
 
     class Meta:
@@ -170,9 +171,10 @@ class DepositInterestPayoutForm(forms.ModelForm):
         self.asset = asset
         super().__init__(*args, **kwargs)
         if self.instance.pk:
-            self.fields['credit_to_account'].initial = bool(self.instance.cash_transaction_id)
+            self.fields['credit_to_account'].initial = deposit_payout_affects_account_balance(self.instance.payout_date)
         elif 'payout_date' in self.initial and self.initial['payout_date']:
-            self.fields['credit_to_account'].initial = self.initial['payout_date'] >= timezone.localdate()
+            self.fields['credit_to_account'].initial = deposit_payout_affects_account_balance(self.initial['payout_date'])
+        self.fields['credit_to_account'].disabled = True
         for field in self.fields.values():
             existing = field.widget.attrs.get('class', '')
             field.widget.attrs['class'] = f'{existing} form-control'.strip()
@@ -278,15 +280,20 @@ class TransactionForm(StyledModelForm):
 class TransferForm(StyledModelForm):
     amount = forms.DecimalField(required=False, initial=0)
     asset_quantity = forms.DecimalField(required=False, initial=0)
+    fee = forms.DecimalField(required=False, initial=0)
     occurred_at = forms.DateTimeField(
         initial=timezone.now,
         input_formats=['%Y-%m-%dT%H:%M', '%Y-%m-%dT%H:%M:%S'],
         widget=forms.DateTimeInput(attrs={'type': 'datetime-local'}),
     )
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, account=None, **kwargs):
         super().__init__(*args, **kwargs)
         self.instance.transaction_type = Transaction.TransactionType.TRANSFER
+        if account:
+            self.fields['source_account'].initial = account
+        if 'fee' in self.fields and self.fields['fee'].initial in (None, ''):
+            self.fields['fee'].initial = 0
 
     class Meta:
         model = Transaction
