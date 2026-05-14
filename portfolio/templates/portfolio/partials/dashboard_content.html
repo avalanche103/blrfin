@@ -1,37 +1,55 @@
 {% include "portfolio/partials/messages.html" %}
 
 <section class="toolbar" aria-label="Быстрые действия">
-    <div class="toolbar-status">
-        <div>
-            <strong>Курсы НБРБ</strong>
-            {% if latest_rate_date %}
-            <span>На ближайшую доступную дату: {{ latest_rate_date|date:'d.m.Y' }}</span>
-            {% if base_currency_rate_to_byn %}
-            <span>1 {{ base_currency_symbol }} = {{ base_currency_rate_to_byn|floatformat:4 }} BYN</span>
-            {% endif %}
-            {% else %}
-            <span>Курсы еще не загружены</span>
-            {% endif %}
+    <div class="fx-rates-panel" style="display: flex; gap: 12px; margin-bottom: 12px;">
+        <div class="performance-stat fx-rate-card" style="width: 240px; min-width: 240px; max-width: 240px; display: flex; flex-direction: column; align-items: stretch; justify-content: stretch;">
+            <span class="label">Сегодня</span>
+            <span class="value value-line mono" style="flex: 1; display: flex; align-items: center; justify-content: center; font-size: 1.6em; min-height: 2.5em;">{% if fx_rates_panel.today.rate %}{{ fx_rates_panel.today.rate|floatformat:4 }}{% else %}<span class="muted">нет</span>{% endif %} BYN</span>
+            <span class="meta" style="display: flex; justify-content: flex-start; align-items: flex-end; margin-top: auto;">
+                <span style="font-size: 0.95em;">{{ fx_rates_panel.today.date|date:'d.m.Y' }}</span>
+            </span>
+        </div>
+        <div class="performance-stat fx-rate-card" style="width: 240px; min-width: 240px; max-width: 240px; display: flex; flex-direction: column; align-items: stretch; justify-content: stretch;">
+            <span class="label">Конец прошлого месяца</span>
+            <span class="value value-line mono" style="flex: 1; display: flex; align-items: center; justify-content: center; font-size: 1.6em; min-height: 2.5em;">{% if fx_rates_panel.prev_month.rate %}{{ fx_rates_panel.prev_month.rate|floatformat:4 }}{% else %}<span class="muted">нет</span>{% endif %} BYN</span>
+            <span class="meta" style="display: flex; justify-content: space-between; align-items: flex-end; margin-top: auto;">
+                <span style="font-size: 0.95em;">{{ fx_rates_panel.prev_month.date|date:'d.m.Y' }}</span>
+                {% if fx_rates_panel.prev_month.pct_vs_today is not None %}
+                    <span style="font-size: 0.95em; text-align: right; color: {% if fx_rates_panel.prev_month.pct_vs_today > 0 %}#1a7f37{% elif fx_rates_panel.prev_month.pct_vs_today < 0 %}#d32f2f{% else %}#888{% endif %}; min-width: 60px;">{% if fx_rates_panel.prev_month.pct_vs_today > 0 %}+{% endif %}{{ fx_rates_panel.prev_month.pct_vs_today|floatformat:2 }}%</span>
+                {% endif %}
+            </span>
+        </div>
+        <div class="performance-stat fx-rate-card" style="width: 240px; min-width: 240px; max-width: 240px; display: flex; flex-direction: column; align-items: stretch; justify-content: stretch;">
+            <span class="label">Конец прошлого года</span>
+            <span class="value value-line mono" style="flex: 1; display: flex; align-items: center; justify-content: center; font-size: 1.6em; min-height: 2.5em;">{% if fx_rates_panel.prev_year.rate %}{{ fx_rates_panel.prev_year.rate|floatformat:4 }}{% else %}<span class="muted">нет</span>{% endif %} BYN</span>
+            <span class="meta" style="display: flex; justify-content: space-between; align-items: flex-end; margin-top: auto;">
+                <span style="font-size: 0.95em;">{{ fx_rates_panel.prev_year.date|date:'d.m.Y' }}</span>
+                {% if fx_rates_panel.prev_year.pct_vs_today is not None %}
+                    <span style="font-size: 0.95em; text-align: right; color: {% if fx_rates_panel.prev_year.pct_vs_today > 0 %}#1a7f37{% elif fx_rates_panel.prev_year.pct_vs_today < 0 %}#d32f2f{% else %}#888{% endif %}; min-width: 60px;">{% if fx_rates_panel.prev_year.pct_vs_today > 0 %}+{% endif %}{{ fx_rates_panel.prev_year.pct_vs_today|floatformat:2 }}%</span>
+                {% endif %}
+            </span>
         </div>
     </div>
-    <form hx-post="{% url 'portfolio:fx-sync-nbrb' %}" hx-target="#dashboard-content" hx-swap="innerHTML" style="display:inline-flex;">
-        {% csrf_token %}
-        <button class="action-button action-button--toolbar" type="submit">
-            <strong>Обновить курсы</strong>
+    <div class="toolbar-status" style="margin-top: 0;">
+        <form hx-post="{% url 'portfolio:fx-sync-nbrb' %}" hx-target="#dashboard-content" hx-swap="innerHTML" style="display:inline-flex;">
+            {% csrf_token %}
+            <button class="action-button action-button--toolbar" type="submit">
+                <strong>Обновить курсы</strong>
+            </button>
+        </form>
+        <button class="action-button action-button--toolbar" hx-get="{% url 'portfolio:account-form' %}" hx-target="#modal-root" hx-swap="innerHTML" type="button">
+            <strong>Добавить банк</strong>
         </button>
-    </form>
-    <button class="action-button action-button--toolbar" hx-get="{% url 'portfolio:account-form' %}" hx-target="#modal-root" hx-swap="innerHTML" type="button">
-        <strong>Добавить банк</strong>
-    </button>
-    <button class="action-button action-button--toolbar" hx-get="{% url 'portfolio:account-topup-form' %}" hx-target="#modal-root" hx-swap="innerHTML" type="button">
-        <strong>Пополнить счет</strong>
-    </button>
-    <button class="action-button action-button--toolbar" hx-get="{% url 'portfolio:transfer-form' %}" hx-target="#modal-root" hx-swap="innerHTML" type="button">
-        <strong>Перевод между счетами</strong>
-    </button>
-    <button class="action-button action-button--toolbar" hx-get="{% url 'portfolio:deposit-form' %}" hx-target="#modal-root" hx-swap="innerHTML" type="button">
-        <strong>Добавить депозит</strong>
-    </button>
+        <button class="action-button action-button--toolbar" hx-get="{% url 'portfolio:account-topup-form' %}" hx-target="#modal-root" hx-swap="innerHTML" type="button">
+            <strong>Пополнить счет</strong>
+        </button>
+        <button class="action-button action-button--toolbar" hx-get="{% url 'portfolio:transfer-form' %}" hx-target="#modal-root" hx-swap="innerHTML" type="button">
+            <strong>Перевод между счетами</strong>
+        </button>
+        <button class="action-button action-button--toolbar" hx-get="{% url 'portfolio:deposit-form' %}" hx-target="#modal-root" hx-swap="innerHTML" type="button">
+            <strong>Добавить депозит</strong>
+        </button>
+    </div>
 </section>
 
 <div class="grid">
